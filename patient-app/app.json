@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Insight Navigator",
+    "slug": "insight-navigator-patient",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "insight",
+    "platforms": ["ios", "android", "web"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.insightnavigator.patient"
+    },
+    "android": {
+      "package": "com.insightnavigator.patient",
+      "adaptiveIcon": {
+        "backgroundColor": "#2563eb"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      ["expo-notifications", { "sounds": [] }]
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "cognitive_fatigue": {
+    "phq_1": 0.25,
+    "phq_4": 0.25,
+    "phq_7": 0.25,
+    "rt_mean": 0.15,
+    "indirect_productive_days": 0.05,
+    "sentiment": 0.05
+  },
+  "social_withdrawal": {
+    "phq_5": 0.10,
+    "phq_9": 0.10,
+    "indirect_social_days": 0.45,
+    "journal_isolation": 0.25,
+    "sentiment": 0.10
+  },
+  "anxiety": {
+    "phq_3": 0.10,
+    "phq_8": 0.30,
+    "rt_mean": 0.25,
+    "journal_work_stress": 0.25,
+    "journal_anxiety": 0.10
+  },
+  "mood_stability": {
+    "phq_1": 0.20,
+    "phq_2": 0.30,
+    "phq_6": 0.25,
+    "phq_9": 0.15,
+    "sentiment": 0.10
+  },
+  "sleep_quality": {
+    "phq_3": 0.20,
+    "indirect_sleep_days": 0.35,
+    "sleep_hours": 0.25,
+    "journal_sleep_disruption": 0.20
+  }
+}
