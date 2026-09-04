@@ -87,7 +87,7 @@ export default function PatientShell({ children }: { children: React.ReactNode }
     <Ctx.Provider value={{ c, dark, setDark, stage }}>
       <div style={{
         fontFamily: "'Nunito', sans-serif",
-        maxWidth: 430, margin: '0 auto',
+        width: '100%',
         minHeight: '100dvh', background: c.bg, color: c.txt,
         position: 'relative',
       }}>
@@ -171,9 +171,8 @@ export default function PatientShell({ children }: { children: React.ReactNode }
 
         {/* Bottom nav */}
         <div style={{
-          position: 'fixed', bottom: 0,
-          left: '50%', transform: 'translateX(-50%)',
-          width: '100%', maxWidth: 430,
+          position: 'fixed', bottom: 0, left: 0,
+          width: '100%',
           background: c.glass,
           backdropFilter: 'blur(16px)',
           borderTop: `1px solid ${c.bdr}`,
