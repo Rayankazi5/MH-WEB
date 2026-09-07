@@ -1,9 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Stack, useRouter, useSegments } from 'expo-router'
-import { useAuth } from '@/hooks/useAuth'
+import { AuthProvider, useAuth } from '@/hooks/useAuth'
 import { api } from '@/services/api'
 
 export default function RootLayout() {
+  return (
+    <AuthProvider>
+      <RootLayoutNav />
+    </AuthProvider>
+  )
+}
+
+function RootLayoutNav() {
   const { user, isLoading } = useAuth()
   const router = useRouter()
   const segments = useSegments()

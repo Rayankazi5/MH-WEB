@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState, ReactNode, createElement } from 'react'
 import { api } from '@/services/api'
 import { getItem, setItem, deleteItem } from '@/services/storage'
 
@@ -9,7 +9,16 @@ interface AuthUser {
   full_name: string
 }
 
-export function useAuth() {
+interface AuthContextValue {
+  user: AuthUser | null
+  isLoading: boolean
+  login: (email: string, password: string) => Promise<void>
+  logout: () => Promise<void>
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null)
+
+export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
@@ -35,5 +44,11 @@ export function useAuth() {
     setUser(null)
   }
 
-  return { user, isLoading, login, logout }
+  return createElement(AuthContext.Provider, { value: { user, isLoading, login, logout } }, children)
+}
+
+export function useAuth() {
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error('useAuth must be used within an AuthProvider')
+  return ctx
 }
