@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     internal_secret: str = "dev_internal_secret_change_in_production"
     journal_encryption_key: str = ""  # base64-encoded 32 bytes
     anthropic_api_key: str = ""
+    hf_api_token: str = ""  # Hugging Face Inference API token, for the mental-health risk classifier
     privacy_enabled: bool = False
     privacy_epsilon: float = 1.0  # ε-DP budget; lower = more privacy, more noise
 

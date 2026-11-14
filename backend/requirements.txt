@@ -14,3 +14,4 @@ vaderSentiment==3.3.2
 anthropic==0.39.0
 APScheduler==3.10.4
 numpy==1.26.4
+httpx==0.28.1

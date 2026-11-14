@@ -16,6 +16,7 @@ const FLAG_LABELS: Record<string, string> = {
   sleep_late_activity: 'Sleep vs. Late Activity',
   mood_movement: 'Mood vs. Movement',
   social_report_vs_withdrawal: 'Social Report vs. Isolation',
+  ml_suicidal_risk_signal: 'ML Risk Signal (Journal)',
 }
 
 export function FlagList({ flags, onResolved }: Props) {

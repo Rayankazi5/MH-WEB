@@ -131,6 +131,31 @@ def should_abstain(uncertainty: float) -> bool:
     return uncertainty > ABSTAIN_THRESHOLD
 
 
+def _enrich_journal_with_mh_classifier(db, journal) -> None:
+    """
+    Best-effort: run the remote mental-health RoBERTa classifier on this
+    journal entry's decrypted body and merge its label scores into
+    keyword_vector (prefixed "mh_") for clinician visibility and for the
+    suicidal-risk safety flag in app/engine/dissonance.py. A classifier
+    failure (missing token, network error, cold-start timeout) must never
+    block scoring — it just means these keys stay absent this round.
+    """
+    from app.services.encryption import decrypt
+    from app.services.mental_health_classifier import classify_mental_health_risk
+
+    try:
+        body = decrypt(journal.body_encrypted)
+        mh_scores = classify_mental_health_risk(body)
+        if not mh_scores:
+            return
+        vector = dict(journal.keyword_vector or {})
+        vector.update({f"mh_{label}": score for label, score in mh_scores.items()})
+        journal.keyword_vector = vector
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 def run_scoring_pipeline(session_id_str: str) -> None:
     from datetime import datetime
     from app.database import SessionLocal
@@ -154,6 +179,9 @@ def run_scoring_pipeline(session_id_str: str) -> None:
         journal = db.query(JournalEntry).filter(
             JournalEntry.session_id == session.id
         ).first()
+
+        if journal is not None:
+            _enrich_journal_with_mh_classifier(db, journal)
 
         indicators = extract_indicators(responses, journal)
         uncertainty = compute_uncertainty(indicators, EXPECTED_INDICATOR_KEYS)

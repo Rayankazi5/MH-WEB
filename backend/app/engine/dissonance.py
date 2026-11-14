@@ -1,5 +1,7 @@
 from typing import List, Dict, Any, Callable
 
+from app.services.mental_health_classifier import SUICIDAL_RISK_THRESHOLD
+
 _Rule = dict[str, Any]
 
 DISSONANCE_RULES: list[_Rule] = [
@@ -34,6 +36,16 @@ DISSONANCE_RULES: list[_Rule] = [
         "self_report_val": "Patient selected few social interactions this week",
         "signal_val": "High isolation keyword frequency in journal entries",
         "severity": "medium",
+    },
+    {
+        "flag_type": "ml_suicidal_risk_signal",
+        "condition": lambda ind: ind.get("mh_suicidal", 0) > SUICIDAL_RISK_THRESHOLD,
+        "self_report_val": "N/A — model-derived signal, not a self-report comparison",
+        "signal_val": lambda ind: (
+            f'Mental-health classifier flagged suicidal-risk language in journal '
+            f'(p={ind.get("mh_suicidal", 0):.2f})'
+        ),
+        "severity": "high",
     },
 ]
 
