@@ -10,7 +10,7 @@ function isToday(d: string | null) {
 
 const METRICS = [
   { label: 'Mood',   clr: '#A78BFA' },
-  { label: 'Sleep',  clr: '#60A5FA' },
+  { label: 'Calm',   clr: '#60A5FA' },
   { label: 'Social', clr: '#4ADE80' },
 ]
 
@@ -35,7 +35,7 @@ export default function PatientHome() {
         const avg = rows.slice(-3).reduce((a, r) => a + r.score, 0) / Math.min(rows.length, 3)
         return Math.round((1 - avg) * 100) // invert: low concern = high %
       }
-      setMetricVals([get('mood_stability'), get('sleep_quality'), get('social_withdrawal')])
+      setMetricVals([get('depressive'), get('anxious'), get('interpersonal')])
       const allScores = scores.slice(-5)
       if (allScores.length) {
         const avg = allScores.reduce((a, r) => a + r.score, 0) / allScores.length

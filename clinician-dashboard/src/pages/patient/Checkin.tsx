@@ -18,6 +18,7 @@ export default function Checkin() {
   const [selected, setSelected] = useState<number | null>(null)
   const [calendarDays, setCalendarDays] = useState<number[]>([])
   const [numericValue, setNumericValue] = useState('')
+  const [textValue, setTextValue] = useState('')
   const [error, setError] = useState('')
   const [ventText, setVentText] = useState('')
   const [ventSent, setVentSent] = useState(false)
@@ -32,6 +33,7 @@ export default function Checkin() {
     setSelected(null)
     setCalendarDays([])
     setNumericValue('')
+    setTextValue('')
     startedAt.current = Date.now()
   }, [index])
 
@@ -55,7 +57,7 @@ export default function Checkin() {
     }
   }
 
-  const advance = async (rawValue: number | number[]) => {
+  const advance = async (rawValue: number | number[] | string) => {
     if (!sessionId || !question) return
     const rtMs = Date.now() - startedAt.current
     setPhase('submitting')
@@ -89,6 +91,8 @@ export default function Checkin() {
   }
 
   const handleCalendar = () => advance(calendarDays)
+
+  const handleText = () => advance(textValue.trim())
 
   const handleVent = async () => {
     if (!ventText.trim() || ventSending) return
@@ -319,6 +323,31 @@ export default function Checkin() {
                 </div>
                 <button onClick={handleCalendar} disabled={isSubmitting} style={{ ...primaryBtn, opacity: isSubmitting ? 0.6 : 1 }}>
                   {isSubmitting ? 'Saving…' : 'Continue'}
+                </button>
+              </div>
+            )}
+
+            {/* Free text (optional) */}
+            {qType === 'text' && (
+              <div>
+                <p style={{ fontSize: '0.875rem', color: '#9ca3af', marginBottom: '0.75rem' }}>
+                  Optional — write as much or as little as you like.
+                </p>
+                <textarea
+                  value={textValue}
+                  onChange={e => setTextValue(e.target.value.slice(0, MAX_VENT_CHARS))}
+                  rows={5}
+                  placeholder="Write freely…"
+                  style={{
+                    width: '100%', boxSizing: 'border-box', padding: '0.75rem 1rem',
+                    border: '2px solid rgba(255,255,255,0.1)', borderRadius: '10px',
+                    fontSize: '1rem', color: '#f3f4f6', background: 'rgba(255,255,255,0.04)',
+                    outline: 'none', marginBottom: '1rem', resize: 'vertical', lineHeight: 1.6,
+                    fontFamily: "'Inter', system-ui, sans-serif",
+                  }}
+                />
+                <button onClick={handleText} disabled={isSubmitting} style={{ ...primaryBtn, opacity: isSubmitting ? 0.6 : 1 }}>
+                  {isSubmitting ? 'Saving…' : textValue.trim() ? 'Continue' : 'Skip'}
                 </button>
               </div>
             )}

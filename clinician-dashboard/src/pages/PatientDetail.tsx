@@ -5,8 +5,9 @@ import { DomainCard } from '../components/DomainCard'
 import { NarrativePanel } from '../components/NarrativePanel'
 import { FlagList } from '../components/FlagList'
 import { ReportModal } from '../components/ReportModal'
+import { PatientTypePanel, TYPE_KEYS } from '../components/PatientType'
 
-const DOMAINS = ['cognitive_fatigue', 'social_withdrawal', 'anxiety', 'mood_stability', 'sleep_quality']
+const DOMAINS: readonly string[] = TYPE_KEYS
 
 export default function PatientDetail() {
   const { id } = useParams<{ id: string }>()
@@ -100,9 +101,15 @@ export default function PatientDetail() {
 
       {report && <ReportModal report={report} onClose={() => setReport(null)} />}
 
-      {/* Domain score grid */}
+      {/* Patient type */}
       <section style={{ marginBottom: '1.5rem' }}>
-        <h2 style={sectionHeading}>Score trends (last 8 weeks)</h2>
+        <h2 style={sectionHeading}>Patient type</h2>
+        <PatientTypePanel type={patient?.patient_type} />
+      </section>
+
+      {/* Patient-type score trends */}
+      <section style={{ marginBottom: '1.5rem' }}>
+        <h2 style={sectionHeading}>Patient-type trends (last 8 weeks)</h2>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '0.75rem' }}>
           {DOMAINS.map(d => (
             <DomainCard key={d} domain={d} scores={scoresByDomain[d]} />

@@ -74,6 +74,19 @@ export interface AuthUser {
 
 // ── Clinician types ─────────────────────────────────────────────────────────
 
+export interface PatientType {
+  primary: string
+  primary_label: string
+  secondary: string[]
+  secondary_labels: string[]
+  at_risk: boolean
+  safety_items: string[]
+  scores: Record<string, number>
+  threshold: number
+  session_id?: string
+  session_date?: string | null
+}
+
 export interface PatientSummary {
   id: string
   full_name: string
@@ -81,6 +94,7 @@ export interface PatientSummary {
   timezone: string
   last_session_at: string | null
   open_flags: number
+  patient_type?: PatientType | null
 }
 
 export interface DomainScore {
@@ -128,7 +142,7 @@ export interface SessionResponse {
   question_key: string
   question_text: string
   question_type: string
-  raw_value: number | number[]
+  raw_value: number | number[] | string
   answer_label: string
 }
 
@@ -170,12 +184,13 @@ export interface ClinicalReport {
 export interface Question {
   key: string
   text: string
-  type: 'likert' | 'calendar' | 'numeric' | string
+  type: 'phq9' | 'likert' | 'calendar' | 'numeric' | 'text' | string
   scale?: { min: number; max: number; labels: string[] } | null
 }
 
 export interface SessionStart {
   session_id: string
+  stage?: string
   questions: Question[]
 }
 
@@ -264,7 +279,7 @@ export const api = {
     startSession: () =>
       patientRequest<SessionStart>('/patient/session/start', { method: 'POST', body: JSON.stringify({}) }),
 
-    respond: (sessionId: string, questionKey: string, rawValue: number | number[], responseTimeMs: number) =>
+    respond: (sessionId: string, questionKey: string, rawValue: number | number[] | string, responseTimeMs: number) =>
       patientRequest<{ status: string }>(`/patient/session/${sessionId}/respond`, {
         method: 'POST',
         body: JSON.stringify({ question_key: questionKey, raw_value: rawValue, response_time_ms: responseTimeMs }),

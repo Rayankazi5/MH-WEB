@@ -11,10 +11,11 @@ from app.engine.scoring import (
     ABSTAIN_THRESHOLD,
     DOMAINS,
     compute_all_domains,
-    compute_domain_score,
     compute_uncertainty,
     normalise_calendar_inverted,
+    normalise_meals_concern,
     normalise_phq,
+    normalise_sleep_concern,
     normalise_rt,
     normalise_sentiment,
     should_abstain,
@@ -83,57 +84,45 @@ class TestNormaliseSentiment:
         assert normalise_sentiment(-1.0) == pytest.approx(1.0)
 
 
-# ── Domain scoring ────────────────────────────────────────────────────────────
+# ── Patient-type scoring ──────────────────────────────────────────────────────
 
-class TestComputeDomainScore:
-    def setup_method(self):
-        self.weights = load_weights()
+class TestSleepAndMealConcern:
+    def test_healthy_sleep_is_zero(self):
+        assert normalise_sleep_concern(8) == 0.0
 
-    def test_zero_indicators_gives_zero(self):
-        score = compute_domain_score({}, self.weights, "mood_stability")
-        assert score == 0.0
+    def test_short_and_long_sleep_are_concerning(self):
+        assert normalise_sleep_concern(4) == 1.0
+        assert normalise_sleep_concern(12) == 1.0
+        assert 0 < normalise_sleep_concern(5.5) < 1
 
-    def test_all_ones_is_positive(self):
-        indicators = {k: 1.0 for domain in self.weights.values() for k in domain}
-        score = compute_domain_score(indicators, self.weights, "anxiety")
-        assert score > 0
-
-    def test_relu_clamps_negative(self):
-        # All indicators at 0 → dot product = 0 → after ReLU still 0
-        indicators = {k: 0.0 for domain in self.weights.values() for k in domain}
-        for domain in DOMAINS:
-            assert compute_domain_score(indicators, self.weights, domain) == 0.0
+    def test_meals(self):
+        assert normalise_meals_concern(3) == 0.0
+        assert normalise_meals_concern(0) == 1.0
+        assert normalise_meals_concern(1.5) == pytest.approx(0.4)
 
 
 class TestComputeAllDomains:
     def setup_method(self):
         self.weights = load_weights()
 
-    def test_sums_to_one(self):
-        indicators = {k: 0.5 for domain in self.weights.values() for k in domain}
+    def test_one_score_per_type_when_all_answered(self):
+        indicators = {k: 0.5 for profile in self.weights.values() for k in profile}
         scores = compute_all_domains(indicators, self.weights)
-        assert sum(scores.values()) == pytest.approx(1.0, abs=1e-6)
+        assert set(scores) == set(DOMAINS)
+        assert all(v == pytest.approx(0.5) for v in scores.values())
 
-    def test_returns_all_five_domains(self):
-        scores = compute_all_domains({}, self.weights)
-        assert set(scores.keys()) == set(DOMAINS)
+    def test_no_answers_gives_no_scores(self):
+        assert compute_all_domains({}, self.weights) == {}
 
-    def test_zero_indicators_distributes_uniformly(self):
-        # All zero → all pseudosums 0 → after adding epsilon, all equal
-        scores = compute_all_domains({}, self.weights)
-        values = list(scores.values())
-        assert max(values) - min(values) < 0.01
+    def test_scores_are_absolute_not_shares(self):
+        indicators = {k: 1.0 for profile in self.weights.values() for k in profile}
+        assert all(v == pytest.approx(1.0) for v in compute_all_domains(indicators, self.weights).values())
 
-    def test_elevated_sleep_indicators(self):
-        # High sleep concern indicators should push sleep_quality up
-        indicators = {
-            "indirect_sleep_days": 1.0,
-            "sleep_hours": 1.0,
-            "phq_3": 1.0,
-            "journal_sleep_disruption": 1.0,
-        }
+    def test_flashbacks_drive_trauma(self):
+        indicators = {k: 0.0 for profile in self.weights.values() for k in profile}
+        indicators["ref_flashbacks"] = 1.0
         scores = compute_all_domains(indicators, self.weights)
-        assert scores["sleep_quality"] == max(scores.values())
+        assert max(scores, key=scores.get) == "trauma"
 
 
 # ── Uncertainty & abstention ──────────────────────────────────────────────────
@@ -177,57 +166,28 @@ class TestShouldAbstain:
 
 class TestDetectDissonance:
     def test_no_flags_when_no_signals(self):
-        flags = detect_dissonance({})
-        assert flags == []
+        assert detect_dissonance({}) == []
 
-    def test_social_withdrawal_flag_triggered(self):
-        indicators = {
-            "indirect_social_days": 0.8,
-            "journal_isolation": 0.7,
-        }
-        flags = detect_dissonance(indicators)
-        flag_types = [f["flag_type"] for f in flags]
-        assert "social_report_vs_withdrawal" in flag_types
+    def test_loneliness_vs_journal_isolation_flag(self):
+        flags = detect_dissonance({"ref_loneliness": 0.0, "journal_isolation": 0.7})
+        assert "social_report_vs_withdrawal" in [f["flag_type"] for f in flags]
 
-    def test_social_withdrawal_not_triggered_when_below_threshold(self):
-        indicators = {
-            "indirect_social_days": 0.3,
-            "journal_isolation": 0.3,
-        }
-        flags = detect_dissonance(indicators)
-        flag_types = [f["flag_type"] for f in flags]
-        assert "social_report_vs_withdrawal" not in flag_types
+    def test_loneliness_flag_not_triggered_when_lonely_reported(self):
+        flags = detect_dissonance({"ref_loneliness": 0.67, "journal_isolation": 0.7})
+        assert "social_report_vs_withdrawal" not in [f["flag_type"] for f in flags]
 
-    def test_mood_movement_flag_triggered(self):
-        indicators = {
-            "phq_2": 0.1,         # low mood self-report
-            "daily_step_variance": 0.1,   # sedentary
-        }
-        flags = detect_dissonance(indicators)
-        flag_types = [f["flag_type"] for f in flags]
-        assert "mood_movement" in flag_types
+    def test_mood_movement_needs_movement_data(self):
+        calm = {"ref_no_excitement": 0.0, "ref_hopelessness": 0.0}
+        assert "mood_movement" not in [f["flag_type"] for f in detect_dissonance(calm)]
+        flags = detect_dissonance({**calm, "daily_step_variance": 0.1})
+        assert "mood_movement" in [f["flag_type"] for f in flags]
 
-    def test_flag_has_required_fields(self):
-        indicators = {
-            "indirect_social_days": 0.8,
-            "journal_isolation": 0.7,
-        }
-        flags = detect_dissonance(indicators)
-        assert len(flags) >= 1
+    def test_flag_fields_and_severities(self):
+        flags = detect_dissonance({
+            "ref_loneliness": 0.0, "journal_isolation": 0.7,
+            "ref_no_excitement": 0.0, "ref_hopelessness": 0.0, "daily_step_variance": 0.1,
+        })
+        assert len(flags) >= 2
         for flag in flags:
-            assert "flag_type" in flag
-            assert "self_report_val" in flag
-            assert "signal_val" in flag
-            assert "severity" in flag
-
-    def test_severity_values_are_valid(self):
-        indicators = {
-            "phq_2": 0.1,
-            "daily_step_variance": 0.1,
-            "indirect_social_days": 0.8,
-            "journal_isolation": 0.7,
-        }
-        flags = detect_dissonance(indicators)
-        valid_severities = {"low", "medium", "high"}
-        for flag in flags:
-            assert flag["severity"] in valid_severities
+            assert set(flag) == {"flag_type", "self_report_val", "signal_val", "severity"}
+            assert flag["severity"] in {"low", "medium", "high"}

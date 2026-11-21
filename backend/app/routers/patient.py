@@ -6,8 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import require_patient
 from app.database import get_db
-from app.engine.questions import QUESTION_BANK
+from app.engine.questions import ANSWERABLE, generate_questions
 from app.engine.scoring import run_scoring_pipeline
+from app.engine.stages import determine_stage
+from app.engine.profiles import PROFILE_KEYS
 from app.models.flag import DissonanceFlag
 from app.models.journal import JournalEntry
 from app.models.score import DomainScore
@@ -33,8 +35,11 @@ def start_session(
         .filter(CheckInSession.patient_id == current_user.id, CheckInSession.completed_at.is_(None))
         .first()
     )
+    # Consult the reference questionnaire for this patient's stage before generating questions.
+    # The stage comes from the last completed check-in, so it is stable while a session is open.
+    stage = determine_stage(db, current_user.id)
     if active:
-        return SessionStartResponse(session_id=active.id, questions=QUESTION_BANK)
+        return SessionStartResponse(session_id=active.id, stage=stage, questions=generate_questions(stage))
 
     # Block a second completed session on the same calendar day (UTC)
     today_start = datetime.combine(date.today(), datetime.min.time())
@@ -53,7 +58,7 @@ def start_session(
     db.add(session)
     db.commit()
     db.refresh(session)
-    return SessionStartResponse(session_id=session.id, questions=QUESTION_BANK)
+    return SessionStartResponse(session_id=session.id, stage=stage, questions=generate_questions(stage))
 
 
 @router.post("/session/{session_id}/reset", status_code=status.HTTP_200_OK)
@@ -120,8 +125,7 @@ def respond(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session already completed")
 
     # Validate question key
-    valid_keys = {q["key"] for q in QUESTION_BANK}
-    if payload.question_key not in valid_keys:
+    if payload.question_key not in ANSWERABLE:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown question key")
 
     # Upsert — allow re-answering before completion
@@ -133,10 +137,15 @@ def respond(
         )
         .first()
     )
-    question_meta = next(q for q in QUESTION_BANK if q["key"] == payload.question_key)
+    question_meta = ANSWERABLE[payload.question_key]
+
+    raw_value = payload.raw_value
+    if question_meta["type"] == "text":
+        # Free-text answers are as sensitive as journals — store encrypted.
+        raw_value = encrypt(str(raw_value or "")[:2000])
 
     if existing:
-        existing.raw_value = payload.raw_value
+        existing.raw_value = raw_value
         existing.response_time_ms = payload.response_time_ms
         existing.answered_at = datetime.utcnow()
     else:
@@ -144,7 +153,7 @@ def respond(
             session_id=session_id,
             question_key=payload.question_key,
             question_type=question_meta["type"],
-            raw_value=payload.raw_value,
+            raw_value=raw_value,
             response_time_ms=payload.response_time_ms,
         ))
 
@@ -313,7 +322,8 @@ def history(
     cutoff = datetime.utcnow() - timedelta(weeks=weeks)
     scores = (
         db.query(DomainScore)
-        .filter(DomainScore.patient_id == current_user.id, DomainScore.computed_at >= cutoff)
+        .filter(DomainScore.patient_id == current_user.id, DomainScore.computed_at >= cutoff,
+                DomainScore.domain.in_(PROFILE_KEYS))
         .order_by(DomainScore.computed_at)
         .all()
     )
@@ -371,6 +381,7 @@ def patient_insights(
         .filter(
             DomainScore.patient_id == current_user.id,
             DomainScore.computed_at >= cutoff,
+            DomainScore.domain.in_(PROFILE_KEYS),
         )
         .order_by(DomainScore.computed_at.desc())
         .all()

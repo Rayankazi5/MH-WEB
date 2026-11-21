@@ -44,8 +44,8 @@ export const useShell = () => useContext(Ctx)
 function deriveStage(scores: { domain: string; score: number }[]): StageKey {
   if (!scores.length) return 'S1'
   const avg = scores.reduce((s, r) => s + r.score, 0) / scores.length
-  const mood = scores.find(r => r.domain === 'mood_stability')?.score ?? avg
-  const anxiety = scores.find(r => r.domain === 'anxiety')?.score ?? avg
+  const mood = scores.find(r => r.domain === 'depressive')?.score ?? avg
+  const anxiety = scores.find(r => r.domain === 'anxious')?.score ?? avg
   if (mood > 0.5 || anxiety > 0.5) return 'S2'
   if (avg > 0.35) return 'S3'
   if (avg > 0.22) return 'S4'

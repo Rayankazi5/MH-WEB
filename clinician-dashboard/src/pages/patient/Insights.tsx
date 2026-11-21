@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../../services/api'
 
 const KEYWORDS = [
-  { key: 'sleep',   label: 'My Sleep',       icon: '🌙', description: 'Sleep quality and duration patterns' },
-  { key: 'mood',    label: 'My Mood',         icon: '🌤️', description: 'Mood stability and emotional trends' },
-  { key: 'anxiety', label: 'My Anxiety',      icon: '💭', description: 'Anxious thoughts and restlessness' },
-  { key: 'energy',  label: 'My Energy',       icon: '⚡', description: 'Focus, fatigue, and productivity' },
-  { key: 'social',  label: 'Social Life',     icon: '🤝', description: 'Social connection and engagement' },
+  { key: 'sleep',    label: 'Sleep & Eating',  icon: '🌙', description: 'Hours of sleep and meals per day' },
+  { key: 'mood',     label: 'My Mood',         icon: '🌤️', description: 'Numbness, self-worth and interest in things' },
+  { key: 'anxiety',  label: 'My Worries',      icon: '💭', description: 'Anxious or frightening thoughts' },
+  { key: 'energy',   label: 'My Motivation',   icon: '⚡', description: 'Starting, finishing and changing habits' },
+  { key: 'thoughts', label: 'My Thoughts',     icon: '🌀', description: 'Repetitive thoughts and upsetting memories' },
+  { key: 'social',   label: 'Relationships',   icon: '🤝', description: 'Loneliness and people you can rely on' },
   { key: 'overall', label: 'Overall Week',    icon: '🗓️', description: 'A full picture of your week' },
 ]
 

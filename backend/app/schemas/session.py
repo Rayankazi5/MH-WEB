@@ -7,13 +7,14 @@ from pydantic import BaseModel
 
 class QuestionSchema(BaseModel):
     key: str
-    type: str  # "phq9" | "calendar" | "numeric" | "indirect"
+    type: str  # "phq9" | "likert" | "calendar" | "numeric" | "text"
     text: str
     scale: Optional[dict] = None
 
 
 class SessionStartResponse(BaseModel):
     session_id: uuid.UUID
+    stage: Optional[str] = None  # see app/engine/stages.py
     questions: list[QuestionSchema]
 
 

@@ -3,12 +3,14 @@ import re
 from datetime import date, timedelta
 from typing import Optional
 
+from app.engine.profiles import PROFILE_KEYS
+
 SYSTEM_PROMPT = """You are a clinical documentation assistant supporting a licensed mental health clinician.
 Your role is to summarise one week of a patient's behavioral and self-report data into a structured History of Present Illness (HPI) format.
 
 STRICT RULES:
 1. Output ONLY a JSON object with a single key "bullets" containing an array of 5-6 strings.
-2. Each bullet must begin with a clinical domain label in brackets: [Sleep], [Mood], [Anxiety], [Cognition], [Social], [Behaviour].
+2. Each bullet must begin with a label in brackets: [Depressive], [Anxious], [Obsessive], [Trauma], [Interpersonal], [Behaviour]. The first four-five bullets cover the patient-type scores; [Behaviour] covers sleep, meals and engagement.
 3. Write in neutral, third-person clinical language. No diagnosis. No prediction. Use phrases like "Patient reported...", "Data indicates...", "Clinician attention advised..."
 4. Do NOT reproduce any raw journal text verbatim.
 5. Do NOT include any disclaimers, preambles, or keys other than "bullets".
@@ -16,7 +18,7 @@ STRICT RULES:
 7. Flag abstained sessions explicitly: "Scoring withheld for N sessions due to data quality."
 
 OUTPUT FORMAT (strict JSON, no markdown):
-{"bullets": ["[Sleep] ...", "[Mood] ...", "[Anxiety] ...", "[Cognition] ...", "[Social] ...", "[Behaviour] ..."]}"""
+{"bullets": ["[Depressive] ...", "[Anxious] ...", "[Obsessive] ...", "[Trauma] ...", "[Interpersonal] ...", "[Behaviour] ..."]}"""
 
 
 def _build_user_prompt(ctx: dict) -> str:
@@ -38,7 +40,7 @@ WEEK: {ctx["week_start"]} to {ctx["week_end"]}
 SESSIONS COMPLETED: {ctx["completed"]} of {ctx["expected"]}
 SESSIONS ABSTAINED: {ctx["abstained"]}
 
-DOMAIN SCORES (0.0 = low concern, 1.0 = high concern):
+PATIENT-TYPE SCORES (0.0 = low concern, 1.0 = high concern; elevated at 0.34+):
 {domain_lines}
 
 JOURNAL THEMES (keyword clusters — not verbatim text):
@@ -111,7 +113,7 @@ def build_narrative_context(db, patient_id, week_start: date) -> Optional[dict]:
 
     scores_rows = (
         db.query(DomainScore)
-        .filter(DomainScore.session_id.in_(session_ids))
+        .filter(DomainScore.session_id.in_(session_ids), DomainScore.domain.in_(PROFILE_KEYS))
         .all()
     )
 

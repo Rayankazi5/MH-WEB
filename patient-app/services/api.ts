@@ -24,7 +24,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 export interface Question {
   key: string
-  type: 'phq9' | 'calendar' | 'numeric'
+  type: 'phq9' | 'likert' | 'calendar' | 'numeric' | 'text'
   text: string
   scale?: { min: number; max: number; labels: string[] } | null
   unit?: string

@@ -10,6 +10,7 @@ from app.database import get_db
 from app.models.flag import DissonanceFlag
 from app.models.link import ClinicianPatient
 from app.models.narrative import Narrative
+from app.engine.profiles import classify_latest
 from app.models.score import DomainScore
 from app.models.session import Session as CheckInSession, QuestionnaireResponse
 from app.models.user import User, ROLE_PATIENT
@@ -65,6 +66,7 @@ def list_patients(current_user: User = Depends(require_clinician), db: Session =
             "timezone": patient.timezone,
             "last_session_at": last_session.completed_at.isoformat() if last_session else None,
             "open_flags": open_flags,
+            "patient_type": classify_latest(db, patient.id),
         })
     return result
 
@@ -146,6 +148,7 @@ def patient_summary(
         "email": patient.email if patient else "",
         "timezone": patient.timezone if patient else "UTC",
         "domain_scores": domain_map,
+        "patient_type": classify_latest(db, patient_id),
         "latest_narrative": {
             "week_start": str(narrative.week_start),
             "bullets": narrative.bullets,
@@ -266,56 +269,8 @@ def patient_protective_factors(
     )
     response_map = {r.question_key: r.raw_value for r in responses}
 
-    def calendar_count(key: str):
-        val = response_map.get(key)
-        if val is None:
-            return None
-        return len(val) if isinstance(val, list) else int(val)
-
-    sleep_days = calendar_count("indirect_sleep_days")
-    social_days = calendar_count("indirect_social_days")
-    productive_days = calendar_count("indirect_productive_days")
-
-    sleep_hours_raw = response_map.get("sleep_hours")
-    sleep_hours = float(sleep_hours_raw) if sleep_hours_raw is not None else None
-
-    factors = []
-
-    if sleep_days is not None:
-        strength = "strong" if sleep_days >= 5 else "moderate" if sleep_days >= 3 else "low"
-        factors.append({
-            "label": "Good sleep nights",
-            "value": f"{sleep_days}/7",
-            "strength": strength,
-            "icon": "🌙",
-        })
-
-    if sleep_hours is not None:
-        strength = "strong" if sleep_hours >= 7 else "moderate" if sleep_hours >= 5.5 else "low"
-        factors.append({
-            "label": "Avg. sleep duration",
-            "value": f"{sleep_hours:.1f} hrs/night",
-            "strength": strength,
-            "icon": "⏱️",
-        })
-
-    if social_days is not None:
-        strength = "strong" if social_days >= 4 else "moderate" if social_days >= 2 else "low"
-        factors.append({
-            "label": "Social engagement",
-            "value": f"{social_days}/7 days",
-            "strength": strength,
-            "icon": "🤝",
-        })
-
-    if productive_days is not None:
-        strength = "strong" if productive_days >= 4 else "moderate" if productive_days >= 2 else "low"
-        factors.append({
-            "label": "Productive days",
-            "value": f"{productive_days}/7 days",
-            "strength": strength,
-            "icon": "✅",
-        })
+    from app.engine.profiles import protective_factors
+    factors = protective_factors(response_map)
 
     return {
         "available": True,
@@ -330,12 +285,13 @@ def patient_sessions(
     current_user: User = Depends(require_clinician),
     db: Session = Depends(get_db),
 ):
-    from app.engine.questions import QUESTION_BANK
+    from app.engine.questions import ALL_QUESTIONS
+    from app.services.encryption import decrypt
     _assert_linked(db, current_user.id, patient_id)
 
     PHQ_LABELS = ["Not at all", "Several days", "More than half the days", "Nearly every day"]
     DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    question_map = {q["key"]: q for q in QUESTION_BANK}
+    question_map = ALL_QUESTIONS
 
     sessions = (
         db.query(CheckInSession)
@@ -366,7 +322,14 @@ def patient_sessions(
             q_text = q_info.get("text", r.question_key)
             q_type = r.question_type
 
-            if q_type == "phq9":
+            raw_value = r.raw_value
+            if q_type == "text":
+                try:
+                    raw_value = decrypt(r.raw_value)
+                except Exception:
+                    raw_value = ""
+                answer_label = raw_value or "(no answer)"
+            elif q_type in ("phq9", "likert"):
                 try:
                     answer_label = PHQ_LABELS[int(r.raw_value)]
                 except (IndexError, TypeError, ValueError):
@@ -392,7 +355,7 @@ def patient_sessions(
                 "question_key": r.question_key,
                 "question_text": q_text,
                 "question_type": q_type,
-                "raw_value": r.raw_value,
+                "raw_value": raw_value,
                 "answer_label": answer_label,
             })
 

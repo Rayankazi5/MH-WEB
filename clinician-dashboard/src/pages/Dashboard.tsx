@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { api, type PatientSummary } from '../services/api'
+import { PatientTypeBadge } from '../components/PatientType'
 
 // const SEVERITY_COLOR: Record<string, string> = { high: '#dc2626', medium: '#d97706', low: '#2563eb' }
 
@@ -95,6 +96,7 @@ export default function Dashboard() {
                   <span style={{ marginLeft: '0.5rem', fontSize: '0.8125rem', color: '#9ca3af' }}>{p.email}</span>
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                  <PatientTypeBadge type={p.patient_type} />
                   {p.open_flags > 0 && (
                     <span style={{ background: '#fef2f2', color: '#dc2626', borderRadius: '999px', padding: '0.125rem 0.625rem', fontSize: '0.75rem', fontWeight: 600 }}>
                       {p.open_flags} flag{p.open_flags > 1 ? 's' : ''}

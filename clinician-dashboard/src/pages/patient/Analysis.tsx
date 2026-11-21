@@ -3,22 +3,24 @@ import { api } from '../../services/api'
 import { useShell } from './Shell'
 
 const KEYWORDS = [
-  { key: 'sleep',   label: 'Sleep',   icon: '🌙' },
-  { key: 'mood',    label: 'Mood',    icon: '🌤️' },
-  { key: 'anxiety', label: 'Anxiety', icon: '💭' },
-  { key: 'energy',  label: 'Energy',  icon: '⚡' },
-  { key: 'social',  label: 'Social',  icon: '🤝' },
+  { key: 'sleep',    label: 'Sleep & Eating', icon: '🌙' },
+  { key: 'mood',     label: 'Mood',           icon: '🌤️' },
+  { key: 'anxiety',  label: 'Worries',        icon: '💭' },
+  { key: 'energy',   label: 'Motivation',     icon: '⚡' },
+  { key: 'thoughts', label: 'Thoughts',       icon: '🌀' },
+  { key: 'social',   label: 'Relationships',  icon: '🤝' },
   { key: 'overall', label: 'Overall', icon: '🗓️' },
 ]
 
 type ChatEntry = { label: string; response: string }
 
+// Patient-facing names for each patient type (clinical names stay clinician-side)
 const DOMAIN_LABELS: Record<string, string> = {
-  cognitive_fatigue: 'Cognitive Fatigue',
-  social_withdrawal: 'Social Withdrawal',
-  anxiety: 'Anxiety',
-  mood_stability: 'Mood Stability',
-  sleep_quality: 'Sleep Quality',
+  depressive: 'Mood & motivation',
+  anxious: 'Worry',
+  obsessive: 'Repetitive thoughts',
+  trauma: 'Upsetting memories',
+  interpersonal: 'Relationships',
 }
 
 export default function PatientAnalysis() {
@@ -40,7 +42,7 @@ export default function PatientAnalysis() {
     api.patient.history().then(data => {
       setScores(data)
       const mood = data
-        .filter(d => d.domain === 'mood_stability')
+        .filter(d => d.domain === 'depressive')
         .slice(-7)
         .map(d => Math.round((1 - d.score) * 100))
       if (mood.length > 0) setMoodPoints(mood)
@@ -101,7 +103,7 @@ export default function PatientAnalysis() {
   const domainAvg = Object.entries(domainMap).map(([d, total]) => ({
     label: DOMAIN_LABELS[d] ?? d,
     pct: Math.round((total / (domainCounts[d] ?? 1)) * 100),
-    clr: { cognitive_fatigue: c.pri, social_withdrawal: '#60A5FA', anxiety: '#FB923C', mood_stability: '#4ADE80', sleep_quality: '#F87171' }[d] ?? c.pri,
+    clr: ({ depressive: c.pri, anxious: '#FB923C', obsessive: '#F87171', trauma: '#60A5FA', interpersonal: '#4ADE80' } as Record<string, string>)[d] ?? c.pri,
   })).sort((a, b) => b.pct - a.pct)
 
   return (
@@ -158,7 +160,7 @@ export default function PatientAnalysis() {
           <div style={{ color: c.txt2, fontSize: 13 }}>
             {verdictOk
               ? 'Your behavioural signals are within a healthy range. Keep it up.'
-              : 'Some domains show elevated concern. Check insights below for details.'}
+              : 'Some areas show elevated concern. Check insights below for details.'}
           </div>
         </div>
       </div>
@@ -178,7 +180,7 @@ export default function PatientAnalysis() {
           {xaiOpen && (
             <div style={{ padding: '0 20px 20px', borderTop: `1px solid ${c.bdr}` }}>
               <p style={{ color: c.txt3, fontSize: 12, marginTop: 12, marginBottom: 14 }}>
-                Average concern score per domain (0 = low concern, 100 = high concern):
+                Average concern score per area (0 = low concern, 100 = high concern):
               </p>
               {domainAvg.map(({ label, pct, clr }) => (
                 <div key={label} style={{ marginBottom: 10 }}>

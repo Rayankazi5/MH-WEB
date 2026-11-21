@@ -1,14 +1,7 @@
 import type { ClinicalReport } from '../services/api'
+import { TYPE_KEYS, TYPE_LABELS as DOMAIN_LABELS } from './PatientType'
 
-const DOMAIN_LABELS: Record<string, string> = {
-  cognitive_fatigue: 'Cognitive Fatigue / Energy',
-  social_withdrawal: 'Social Withdrawal',
-  anxiety: 'Anxiety',
-  mood_stability: 'Mood Stability',
-  sleep_quality: 'Sleep Quality',
-}
-
-const DOMAIN_ORDER = ['sleep_quality', 'mood_stability', 'anxiety', 'cognitive_fatigue', 'social_withdrawal']
+const DOMAIN_ORDER: readonly string[] = TYPE_KEYS
 
 function trendBadge(trend: string) {
   const color =

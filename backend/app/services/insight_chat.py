@@ -20,89 +20,107 @@ STRICT RULES:
 9. Never reveal that you are an AI language model or describe the underlying system.
 """
 
-# Maps user-facing keyword to the relevant scoring domains and indicator keys
+# Maps user-facing keyword to the relevant patient-type scores and questionnaire items.
+# Safety items are deliberately not described back to the patient here.
 KEYWORD_CONFIG = {
     "sleep": {
-        "label": "Your Sleep",
-        "domains": ["sleep_quality"],
-        "indicators": ["sleep_hours", "indirect_sleep_days", "phq_3"],
+        "label": "Your Sleep & Eating",
+        "domains": [],
+        "indicators": ["sleep_hours", "meals_per_day"],
     },
     "mood": {
         "label": "Your Mood",
-        "domains": ["mood_stability"],
-        "indicators": ["phq_2", "phq_6", "sentiment"],
+        "domains": ["depressive"],
+        "indicators": ["ref_numb", "ref_not_worthy", "ref_no_excitement", "sentiment"],
     },
     "anxiety": {
-        "label": "Your Anxiety",
-        "domains": ["anxiety"],
-        "indicators": ["phq_4", "phq_7", "phq_8", "rt_mean"],
+        "label": "Your Worries",
+        "domains": ["anxious"],
+        "indicators": ["ref_thoughts_anxious", "ref_thoughts_scary"],
     },
     "energy": {
-        "label": "Your Energy",
-        "domains": ["cognitive_fatigue"],
-        "indicators": ["phq_4", "phq_7", "indirect_productive_days"],
+        "label": "Your Energy & Motivation",
+        "domains": ["depressive"],
+        "indicators": ["ref_start_finish", "ref_no_excitement", "ref_cant_change_behaviour"],
+    },
+    "thoughts": {
+        "label": "Your Thoughts & Memories",
+        "domains": ["obsessive", "trauma"],
+        "indicators": ["ref_thoughts_repetitive", "ref_thoughts_unwanted", "ref_flashbacks"],
     },
     "social": {
-        "label": "Your Social Life",
-        "domains": ["social_withdrawal"],
-        "indicators": ["indirect_social_days", "phq_2"],
+        "label": "Your Relationships",
+        "domains": ["interpersonal"],
+        "indicators": ["ref_loneliness", "ref_no_one_to_rely_on", "ref_disapproval", "ref_harmful_relationships"],
     },
     "overall": {
         "label": "Your Overall Week",
-        "domains": ["cognitive_fatigue", "social_withdrawal", "anxiety", "mood_stability", "sleep_quality"],
-        "indicators": ["sleep_hours", "indirect_sleep_days", "indirect_social_days", "indirect_productive_days", "sentiment"],
+        "domains": ["depressive", "anxious", "obsessive", "trauma", "interpersonal"],
+        "indicators": ["sleep_hours", "meals_per_day", "ref_loneliness", "ref_thoughts_anxious", "sentiment"],
     },
 }
 
+# Patient-facing (non-clinical) names for each patient type.
 DOMAIN_LABELS = {
-    "cognitive_fatigue": "mental energy and focus",
-    "social_withdrawal": "social connection",
-    "anxiety": "anxiety and restlessness",
-    "mood_stability": "mood stability",
-    "sleep_quality": "sleep quality",
+    "depressive": "mood and motivation",
+    "anxious": "worry and anxious thoughts",
+    "obsessive": "repetitive or unwanted thoughts",
+    "trauma": "upsetting memories",
+    "interpersonal": "relationships and connection",
 }
 
-# Human-readable PHQ label names for the prompt
+# How each questionnaire item reads back to the patient.
+ITEM_PHRASES = {
+    "ref_thoughts_anxious": "anxious or worried thoughts",
+    "ref_thoughts_repetitive": "the same thoughts repeating",
+    "ref_thoughts_unwanted": "unwanted thoughts",
+    "ref_thoughts_scary": "frightening thoughts",
+    "ref_loneliness": "feeling lonely",
+    "ref_numb": "feeling numb",
+    "ref_no_one_to_rely_on": "feeling there's no one to rely on",
+    "ref_not_worthy": "feeling not worthy",
+    "ref_disapproval": "feeling others disapprove of you",
+    "ref_harmful_relationships": "staying in relationships that feel harmful",
+    "ref_cant_change_behaviour": "finding it hard to change a habit",
+    "ref_consequences": "your thoughts or actions causing problems",
+    "ref_no_excitement": "nothing feeling exciting",
+    "ref_start_finish": "trouble starting or finishing things",
+    "ref_flashbacks": "flashbacks or upsetting memories",
+}
+
+SAFETY_KEYS = ("ref_self_harm", "ref_thoughts_harm_others", "ref_hopelessness")
+
+SAFETY_NOTE = (
+    "If you're having thoughts of harming yourself or someone else, please reach out to your "
+    "clinician or a local crisis line right away — you don't have to handle this alone."
+)
+
+# Answer labels for the 0–3 questionnaire items, as read back to the patient
 PHQ_LABELS = ["not at all", "on several days", "more than half the days", "nearly every day"]
 
 
 def _describe_score(score: float, domain: str) -> str:
     label = DOMAIN_LABELS.get(domain, domain)
-    # Scores are softmax-normalised across 5 domains; uniform baseline = 0.20.
-    # Interpret relative to that baseline, not as absolute 0-1 measurements.
-    if score < 0.14:
-        return f"your {label} is not a significant area of concern this week"
-    elif score < 0.22:
-        return f"your {label} shows some mild indicators worth keeping an eye on"
-    elif score < 0.30:
-        return f"your {label} shows noticeable strain this week"
+    # Scores are absolute 0–1; 0.34 ≈ an average answer of "several days".
+    if score < 0.15:
+        return f"there's no significant concern around {label} right now"
+    elif score < 0.34:
+        return f"there are some mild signs around {label} worth keeping an eye on"
+    elif score < 0.6:
+        return f"there's noticeable strain around {label} lately"
     else:
-        return f"your {label} is the primary area of concern this period"
+        return f"the main area of strain right now is {label}"
 
 
 def _describe_indicator(key: str, value) -> Optional[str]:
     if key == "sleep_hours":
         try:
-            h = float(value)
-            return f"averaging {h:.1f} hours of sleep per night"
+            return f"averaging {float(value):g} hours of sleep per night"
         except (TypeError, ValueError):
             return None
-    if key == "indirect_sleep_days":
+    if key == "meals_per_day":
         try:
-            n = int(value) if not isinstance(value, list) else len(value)
-            return f"{n} out of 7 nights of good sleep"
-        except (TypeError, ValueError):
-            return None
-    if key == "indirect_social_days":
-        try:
-            n = int(value) if not isinstance(value, list) else len(value)
-            return f"meaningful social time on {n} out of 7 days"
-        except (TypeError, ValueError):
-            return None
-    if key == "indirect_productive_days":
-        try:
-            n = int(value) if not isinstance(value, list) else len(value)
-            return f"feeling productive on {n} out of 7 days"
+            return f"eating about {float(value):g} meals a day"
         except (TypeError, ValueError):
             return None
     if key == "sentiment":
@@ -116,14 +134,12 @@ def _describe_indicator(key: str, value) -> Optional[str]:
                 return "journal entries with a notably heavy or distressed tone"
         except (TypeError, ValueError):
             return None
-    if key.startswith("phq_") and value is not None:
+    if key in ITEM_PHRASES and value is not None:
         try:
             idx = int(value)
-            label = PHQ_LABELS[idx] if 0 <= idx <= 3 else None
-            if label and idx >= 1:
-                key_name = key.replace("phq_", "")
-                return f"PHQ item {key_name} rated {label}"
-        except (TypeError, ValueError, IndexError):
+            if 1 <= idx <= 3:
+                return f"{ITEM_PHRASES[key]} {PHQ_LABELS[idx]}"
+        except (TypeError, ValueError):
             return None
     return None
 
@@ -150,8 +166,7 @@ def build_insight_prompt(keyword: str, domain_scores: dict, indicators: dict, tr
 
     return (
         f"The user wants to understand: {topic}.\n\n"
-        f"DOMAIN SUMMARY (scores are softmax-normalised across 5 domains; baseline = 0.20 — "
-        f"interpret these as relative concern, not absolute quality): {domain_text}.{trend_text}\n"
+        f"AREA SUMMARY: {domain_text}.{trend_text}\n"
         f"SPECIFIC INDICATORS (raw values — treat these as the ground truth for actual quality): {indicator_text}.\n\n"
         f"When domain summary and specific indicators conflict, always trust the specific indicators. "
         f"Provide a warm, data-grounded 3-4 sentence insight about the user's {topic.lower()} patterns "
@@ -197,6 +212,11 @@ _SUGGESTIONS = {
         "Staying hydrated and getting natural light during the day supports focus and energy.",
         "Breaking tasks into smaller pieces with short breaks every 45 minutes can help on low-energy days.",
     ],
+    "thoughts": [
+        "Your thoughts seem fairly settled lately — notice what helps you feel that way.",
+        "When a thought keeps looping, writing it down can help you put it aside for a while.",
+        "If upsetting memories or thoughts keep coming back, it can really help to talk them through with your clinician.",
+    ],
     "social": [
         "Your social engagement looks healthy — keep investing in the relationships that matter.",
         "Even a quick check-in text to a friend can maintain connection when face-to-face feels hard.",
@@ -213,7 +233,7 @@ _SUGGESTIONS = {
 def _indicator_concern_score(keyword: str, indicators: dict) -> float:
     """
     Compute a 0-1 concern estimate directly from raw indicator values.
-    Used to select the appropriate tip when domain scores (which are softmax-relative)
+    Used to select the appropriate tip when area scores
     would otherwise understate a genuinely poor pattern.
     """
     kw = keyword if keyword in KEYWORD_CONFIG else "overall"
@@ -223,24 +243,17 @@ def _indicator_concern_score(keyword: str, indicators: dict) -> float:
         val = indicators.get(key)
         if val is None:
             continue
-        if key == "sleep_hours":
-            try:
-                # 8+ h = 0 concern, 0 h = 1.0 concern
-                concerns.append(max(0.0, 1.0 - float(val) / 8.0))
-            except (TypeError, ValueError):
-                pass
-        elif key in ("indirect_sleep_days", "indirect_social_days", "indirect_productive_days"):
-            try:
-                n = len(val) if isinstance(val, list) else int(val)
-                # 7 days = 0 concern, 0 days = 1.0 concern
-                concerns.append(max(0.0, 1.0 - n / 7.0))
-            except (TypeError, ValueError):
-                pass
-        elif key.startswith("phq_"):
-            try:
-                concerns.append(int(val) / 3.0)
-            except (TypeError, ValueError):
-                pass
+        try:
+            if key == "sleep_hours":
+                from app.engine.scoring import normalise_sleep_concern
+                concerns.append(normalise_sleep_concern(float(val)))
+            elif key == "meals_per_day":
+                from app.engine.scoring import normalise_meals_concern
+                concerns.append(normalise_meals_concern(float(val)))
+            elif key in ITEM_PHRASES:
+                concerns.append(max(0.0, min(1.0, int(val) / 3.0)))
+        except (TypeError, ValueError):
+            pass
     return sum(concerns) / len(concerns) if concerns else 0.0
 
 
@@ -250,30 +263,34 @@ def _rule_based_insight(keyword: str, domain_scores: dict, indicators: dict,
     config = KEYWORD_CONFIG[kw]
     relevant_domains = [d for d in config["domains"] if d in domain_scores]
 
-    if not relevant_domains:
+    indicator_descs = [
+        desc for k in config["indicators"]
+        if k in indicators and (desc := _describe_indicator(k, indicators[k])) is not None
+    ]
+
+    if not relevant_domains and not indicator_descs:
         return (
             f"Complete a daily check-in to start seeing insights about {config['label'].lower()}. "
             "Your data builds up over time and makes these insights more meaningful."
         )
 
-    avg_score = sum(domain_scores[d] for d in relevant_domains) / len(relevant_domains)
+    avg_score = (
+        sum(domain_scores[d] for d in relevant_domains) / len(relevant_domains) if relevant_domains else 0.0
+    )
 
-    domain_descs = [_describe_score(domain_scores[d], d) for d in relevant_domains]
-    main = "Based on your recent check-ins, " + " and ".join(domain_descs) + "."
+    if relevant_domains:
+        domain_descs = [_describe_score(domain_scores[d], d) for d in relevant_domains]
+        main = "Based on your recent check-ins, " + " and ".join(domain_descs) + "."
+    else:
+        main = "Here's what your recent check-ins show."
 
-    indicator_descs = [
-        desc for k in config["indicators"]
-        if k in indicators and (desc := _describe_indicator(k, indicators[k])) is not None
-    ]
     if indicator_descs:
         main += " Your data shows " + " and ".join(indicator_descs[:2]) + "."
 
     if trend:
         main += f" Compared to the previous period, things appear to be {trend}."
 
-    # Use raw-indicator concern for tip selection — the softmax domain score can be
-    # misleadingly low when other domains happen to score higher, so we take the
-    # more conservative of the two signals.
+    # Take the more conservative of the area score and the raw-answer concern.
     indicator_concern = _indicator_concern_score(kw, indicators)
     effective_score = max(avg_score, indicator_concern)
 
@@ -305,8 +322,26 @@ def _rule_based_vent(free_text: str, domain_scores: dict) -> str:
     )
 
 
+def _safety_endorsed(indicators: dict) -> bool:
+    for k in SAFETY_KEYS:
+        try:
+            if float(indicators.get(k, 0) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def run_insight_chat(keyword: Optional[str], free_text: Optional[str],
                      domain_scores: dict, indicators: dict, trend: Optional[str]) -> str:
+    response = _run_insight_chat(keyword, free_text, domain_scores, indicators, trend)
+    if _safety_endorsed(indicators):
+        response = response.rstrip() + "\n\n" + SAFETY_NOTE
+    return response
+
+
+def _run_insight_chat(keyword: Optional[str], free_text: Optional[str],
+                      domain_scores: dict, indicators: dict, trend: Optional[str]) -> str:
     from app.config import get_settings
     settings = get_settings()
     kw = keyword or "overall"

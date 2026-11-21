@@ -25,11 +25,11 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
 {
   "executive_summary": "2-3 sentence overview of patient status this period.",
   "domain_notes": {
-    "sleep_quality": "One clinical sentence.",
-    "mood_stability": "One clinical sentence.",
-    "anxiety": "One clinical sentence.",
-    "cognitive_fatigue": "One clinical sentence.",
-    "social_withdrawal": "One clinical sentence."
+    "depressive": "One clinical sentence.",
+    "anxious": "One clinical sentence.",
+    "obsessive": "One clinical sentence.",
+    "trauma": "One clinical sentence.",
+    "interpersonal": "One clinical sentence."
   },
   "behavioral_highlights": ["Observation 1.", "Observation 2.", "Observation 3."],
   "journal_summary": "One sentence on journal theme patterns, or omit if no data.",
@@ -37,20 +37,16 @@ OUTPUT FORMAT (strict JSON, no markdown fences):
   "session_focus_recommendations": ["Recommendation 1.", "Recommendation 2.", "Recommendation 3."]
 }"""
 
-DOMAIN_LABELS = {
-    "cognitive_fatigue": "Cognitive Fatigue / Energy",
-    "social_withdrawal": "Social Withdrawal",
-    "anxiety": "Anxiety",
-    "mood_stability": "Mood Stability",
-    "sleep_quality": "Sleep Quality",
-}
+from app.engine.profiles import PROFILE_KEYS, PROFILE_LABELS
+
+DOMAIN_LABELS = {k: PROFILE_LABELS[k] for k in PROFILE_KEYS}
 
 _DOMAIN_THRESHOLDS = {
-    "sleep_quality": ("adequate sleep patterns", "disrupted sleep patterns", "significantly disrupted sleep"),
-    "mood_stability": ("relatively stable mood", "some mood variability", "notable mood instability"),
-    "anxiety": ("manageable anxiety levels", "moderate anxiety indicators", "elevated anxiety indicators"),
-    "cognitive_fatigue": ("good cognitive functioning", "moderate cognitive fatigue", "significant cognitive fatigue"),
-    "social_withdrawal": ("healthy social engagement", "reduced social engagement", "marked social withdrawal"),
+    "depressive": ("few depressive-pattern indicators", "some depressive-pattern indicators", "marked depressive-pattern indicators"),
+    "anxious": ("manageable anxious thinking", "moderate anxious thinking", "elevated anxious and fearful thinking"),
+    "obsessive": ("few repetitive-thought indicators", "some repetitive or intrusive thoughts", "frequent repetitive or intrusive thoughts"),
+    "trauma": ("few trauma-related indicators", "some flashbacks or intrusive memories", "frequent flashbacks or intrusive memories"),
+    "interpersonal": ("adequate relational support", "some loneliness or relational strain", "marked loneliness or relational strain"),
 }
 
 
@@ -75,7 +71,17 @@ def _build_report_prompt(ctx: dict) -> str:
     questionnaire_lines = "\n".join(
         f'  - {r["question_text"]}: {r["answer_label"]}'
         for r in ctx.get("notable_responses", [])
-    ) or "  No non-zero PHQ responses"
+    ) or "  No items answered above 'Not at all'"
+
+    pt = ctx.get("patient_type")
+    if pt:
+        type_line = f'{pt["primary_label"]}' + (
+            f' (also elevated: {", ".join(pt["secondary_labels"])})' if pt["secondary_labels"] else ""
+        )
+        if pt["at_risk"]:
+            type_line = "AT RISK — safety items endorsed: " + ", ".join(pt["safety_items"]) + ". " + type_line
+    else:
+        type_line = "Not yet identified"
 
     avg_rt = ctx.get("avg_rt_ms")
     rt_note = f"{avg_rt:,}ms" if avg_rt else "N/A"
@@ -87,7 +93,9 @@ REPORT PERIOD: {ctx["period_start"]} to {ctx["period_end"]}
 SESSIONS COMPLETED: {adherence.get("completed", 0)} (abstained: {adherence.get("abstained", 0)})
 AVERAGE RESPONSE TIME: {rt_note}
 
-DOMAIN SCORES (0.0 = low concern, 1.0 = high concern, includes trend vs previous period):
+PATIENT TYPE (from the latest check-in): {type_line}
+
+PATIENT-TYPE SCORES (0.0 = low concern, 1.0 = high concern; elevated at 0.34+; includes trend vs previous period):
 {domain_lines}
 
 PROTECTIVE FACTORS (from most recent session):
@@ -100,7 +108,7 @@ JOURNAL SENTIMENT (avg, 0=positive 1=negative): {ctx.get("avg_sentiment", "N/A")
 OPEN DISSONANCE FLAGS:
 {flag_lines}
 
-NOTABLE QUESTIONNAIRE RESPONSES (non-zero PHQ items, most recent scored session):
+NOTABLE QUESTIONNAIRE RESPONSES (items answered above 'Not at all', most recent scored session):
 {questionnaire_lines}"""
 
 
@@ -116,7 +124,7 @@ def _rule_based_report(ctx: dict) -> dict:
         return f"Patient demonstrates {desc} (score {score:.2f}, trend: {trend})."
 
     domains_present = [d for d in DOMAIN_LABELS if d in domain_scores]
-    high_concern = [(d, domain_scores[d]["mean"]) for d in domains_present if domain_scores[d]["mean"] >= 0.55]
+    high_concern = [(d, domain_scores[d]["mean"]) for d in domains_present if domain_scores[d]["mean"] >= 0.34]
     high_concern.sort(key=lambda x: -x[1])
 
     if not domains_present:
@@ -136,6 +144,14 @@ def _rule_based_report(ctx: dict) -> dict:
             "Patient data over the reporting period reflects generally manageable levels "
             "across all tracked domains. Continued monitoring is recommended to confirm stability."
         )
+
+    pt = ctx.get("patient_type")
+    if pt:
+        summary = f"Current patient type: {pt['primary_label']}" + (
+            f" (also elevated: {', '.join(pt['secondary_labels'])})." if pt["secondary_labels"] else "."
+        ) + " " + summary
+        if pt["at_risk"]:
+            summary = "Safety items were endorsed on the latest check-in; immediate clinician review is advised. " + summary
 
     open_flags = ctx.get("open_flags", [])
     flags_summary = (
@@ -222,7 +238,8 @@ def build_report_context(db, patient_id, weeks: int = 4) -> dict:
     from app.models.journal import JournalEntry
     from app.models.score import DomainScore
     from app.models.flag import DissonanceFlag
-    from app.engine.questions import QUESTION_BANK
+    from app.engine.questions import ALL_QUESTIONS
+    from app.engine.profiles import classify_latest
 
     now = datetime.utcnow()
     cutoff = now - timedelta(weeks=weeks)
@@ -242,7 +259,8 @@ def build_report_context(db, patient_id, weeks: int = 4) -> dict:
 
     score_rows = (
         db.query(DomainScore)
-        .filter(DomainScore.patient_id == patient_id, DomainScore.computed_at >= cutoff)
+        .filter(DomainScore.patient_id == patient_id, DomainScore.computed_at >= cutoff,
+                DomainScore.domain.in_(PROFILE_KEYS))
         .all()
     )
     domain_accumulator: dict = {}
@@ -328,36 +346,16 @@ def build_report_context(db, patient_id, weeks: int = 4) -> dict:
         )
         response_map = {r.question_key: r.raw_value for r in responses}
 
-        def cal_count(key: str):
-            val = response_map.get(key)
-            if val is None:
-                return None
-            return len(val) if isinstance(val, list) else int(val)
-
-        sleep_days = cal_count("indirect_sleep_days")
-        social_days = cal_count("indirect_social_days")
-        productive_days = cal_count("indirect_productive_days")
-        sleep_hours_raw = response_map.get("sleep_hours")
-        sleep_hours = float(sleep_hours_raw) if sleep_hours_raw is not None else None
-
-        if sleep_days is not None:
-            strength = "strong" if sleep_days >= 5 else "moderate" if sleep_days >= 3 else "low"
-            protective_factors.append({"label": "Good sleep nights", "value": f"{sleep_days}/7", "strength": strength})
-        if sleep_hours is not None:
-            strength = "strong" if sleep_hours >= 7 else "moderate" if sleep_hours >= 5.5 else "low"
-            protective_factors.append({"label": "Avg. sleep duration", "value": f"{sleep_hours:.1f} hrs/night", "strength": strength})
-        if social_days is not None:
-            strength = "strong" if social_days >= 4 else "moderate" if social_days >= 2 else "low"
-            protective_factors.append({"label": "Social engagement", "value": f"{social_days}/7 days", "strength": strength})
-        if productive_days is not None:
-            strength = "strong" if productive_days >= 4 else "moderate" if productive_days >= 2 else "low"
-            protective_factors.append({"label": "Productive days", "value": f"{productive_days}/7 days", "strength": strength})
+        from app.engine.profiles import protective_factors as _protective
+        protective_factors = [
+            {k: f[k] for k in ("label", "value", "strength")} for f in _protective(response_map)
+        ]
 
         PHQ_LABELS = ["Not at all", "Several days", "More than half the days", "Nearly every day"]
-        question_map = {q["key"]: q for q in QUESTION_BANK}
+        question_map = ALL_QUESTIONS
 
         for r in responses:
-            if r.question_type == "phq9":
+            if r.question_type in ("phq9", "likert"):
                 try:
                     idx = int(r.raw_value)
                     if idx >= 1:
@@ -378,6 +376,7 @@ def build_report_context(db, patient_id, weeks: int = 4) -> dict:
         "period_end": now.strftime("%Y-%m-%d"),
         "adherence": {"completed": completed, "abstained": abstained},
         "domain_scores": domain_scores,
+        "patient_type": classify_latest(db, patient_id),
         "journal_themes": journal_themes,
         "avg_sentiment": avg_sentiment,
         "open_flags": open_flags,

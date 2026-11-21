@@ -4,6 +4,16 @@ import { ProgressBar } from '@/components/ProgressBar'
 import { PHQ9Question } from '@/components/PHQ9Question'
 import { CalendarQuestion } from '@/components/CalendarQuestion'
 import { NumericQuestion } from '@/components/NumericQuestion'
+import { TextQuestion } from '@/components/TextQuestion'
+
+// Patient-facing names for each patient type
+const AREA_LABELS: Record<string, string> = {
+  depressive: 'Mood & motivation',
+  anxious: 'Worry',
+  obsessive: 'Repetitive thoughts',
+  trauma: 'Upsetting memories',
+  interpersonal: 'Relationships',
+}
 
 export default function CheckIn() {
   const { state, questions, currentIndex, currentQuestion, result, error, startSession, submitAnswer, reset } = useSession()
@@ -24,7 +34,7 @@ export default function CheckIn() {
     return (
       <View style={s.screen}>
         <ProgressBar current={currentIndex + 1} total={questions.length} />
-        {currentQuestion.type === 'phq9' && (
+        {(currentQuestion.type === 'phq9' || currentQuestion.type === 'likert') && (
           <PHQ9Question question={currentQuestion} onAnswer={submitAnswer} />
         )}
         {currentQuestion.type === 'calendar' && (
@@ -32,6 +42,9 @@ export default function CheckIn() {
         )}
         {currentQuestion.type === 'numeric' && (
           <NumericQuestion question={currentQuestion} onAnswer={submitAnswer} />
+        )}
+        {currentQuestion.type === 'text' && (
+          <TextQuestion question={currentQuestion} onAnswer={submitAnswer} />
         )}
       </View>
     )
@@ -70,7 +83,7 @@ export default function CheckIn() {
           <View style={s.domainsCard}>
             {result.domains.map(d => (
               <View key={d.domain} style={s.domainRow}>
-                <Text style={s.domainLabel}>{d.domain.replace('_', ' ')}</Text>
+                <Text style={s.domainLabel}>{AREA_LABELS[d.domain] ?? d.domain.replace('_', ' ')}</Text>
                 <View style={s.domainBar}>
                   <View style={[s.domainFill, { width: `${Math.round(d.score * 100)}%` }]} />
                 </View>

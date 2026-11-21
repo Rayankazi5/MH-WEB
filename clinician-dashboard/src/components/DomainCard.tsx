@@ -1,17 +1,10 @@
 import { LineChart, Line, ResponsiveContainer, Tooltip, YAxis } from 'recharts'
 import type { DomainScore } from '../services/api'
+import { TYPE_LABELS as DOMAIN_LABELS } from './PatientType'
 
 interface Props {
   domain: string
   scores: DomainScore[]
-}
-
-const DOMAIN_LABELS: Record<string, string> = {
-  cognitive_fatigue: 'Cognitive Fatigue',
-  social_withdrawal: 'Social Withdrawal',
-  anxiety: 'Anxiety',
-  mood_stability: 'Mood Stability',
-  sleep_quality: 'Sleep Quality',
 }
 
 function scoreColor(score: number): string {

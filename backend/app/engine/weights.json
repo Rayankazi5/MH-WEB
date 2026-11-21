@@ -1,37 +1,39 @@
 {
-  "cognitive_fatigue": {
-    "phq_1": 0.25,
-    "phq_4": 0.25,
-    "phq_7": 0.25,
-    "rt_mean": 0.15,
-    "indirect_productive_days": 0.05,
-    "sentiment": 0.05
+  "depressive": {
+    "ref_hopelessness": 1.0,
+    "ref_numb": 1.0,
+    "ref_not_worthy": 1.0,
+    "ref_no_excitement": 1.0,
+    "ref_start_finish": 1.0,
+    "ref_consequences": 0.5,
+    "sleep_hours": 0.5,
+    "meals_per_day": 0.5,
+    "sentiment": 0.5
   },
-  "social_withdrawal": {
-    "phq_5": 0.10,
-    "phq_9": 0.10,
-    "indirect_social_days": 0.45,
-    "journal_isolation": 0.25,
-    "sentiment": 0.10
+  "anxious": {
+    "ref_thoughts_anxious": 1.5,
+    "ref_thoughts_scary": 1.0,
+    "ref_consequences": 0.5,
+    "sleep_hours": 0.5,
+    "journal_anxiety": 0.5,
+    "journal_work_stress": 0.25
   },
-  "anxiety": {
-    "phq_3": 0.10,
-    "phq_8": 0.30,
-    "rt_mean": 0.25,
-    "journal_work_stress": 0.25,
-    "journal_anxiety": 0.10
+  "obsessive": {
+    "ref_thoughts_repetitive": 1.5,
+    "ref_thoughts_unwanted": 1.0,
+    "ref_cant_change_behaviour": 1.0
   },
-  "mood_stability": {
-    "phq_1": 0.20,
-    "phq_2": 0.30,
-    "phq_6": 0.25,
-    "phq_9": 0.15,
-    "sentiment": 0.10
+  "trauma": {
+    "ref_flashbacks": 1.5,
+    "ref_thoughts_scary": 1.0,
+    "ref_thoughts_unwanted": 0.5,
+    "ref_numb": 0.5
   },
-  "sleep_quality": {
-    "phq_3": 0.20,
-    "indirect_sleep_days": 0.35,
-    "sleep_hours": 0.25,
-    "journal_sleep_disruption": 0.20
+  "interpersonal": {
+    "ref_loneliness": 1.0,
+    "ref_no_one_to_rely_on": 1.0,
+    "ref_disapproval": 1.0,
+    "ref_harmful_relationships": 1.0,
+    "journal_isolation": 0.5
   }
 }

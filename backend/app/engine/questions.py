@@ -3,7 +3,9 @@ PHQ_SCALE = {
     "labels": ["Not at all", "Several days", "More than half the days", "Nearly every day"],
 }
 
-QUESTION_BANK = [
+# Retired PHQ-9 based bank — no longer asked. Kept only so check-ins answered
+# before the switch still show their question text to clinicians.
+LEGACY_QUESTION_BANK = [
     {"key": "phq_1a", "type": "phq9", "text": "This week, how often did you lose interest in things you normally care about?", "scale": PHQ_SCALE},
     {"key": "phq_1b", "type": "phq9", "text": "This week, how often did activities feel joyless or unfulfilling, even ones you usually enjoy?", "scale": PHQ_SCALE},
     {"key": "indirect_sleep_days", "type": "calendar", "text": "Which nights this week did you sleep well? Select all that apply.", "scale": None},
@@ -13,7 +15,7 @@ QUESTION_BANK = [
     {"key": "phq_4", "type": "phq9",  "text": "Feeling tired or having little energy?", "scale": PHQ_SCALE},
     {"key": "phq_5a", "type": "phq9", "text": "This week, how often did you have little or no appetite?", "scale": PHQ_SCALE},
     {"key": "phq_5b", "type": "phq9", "text": "This week, how often did you eat much more than usual or feel out of control around food?", "scale": PHQ_SCALE},
-    {"key": "sleep_hours", "type": "numeric", "text": "On average, how many hours of sleep did you get per night this week?", "scale": {"min": 0, "max": 12}},
+    {"key": "sleep_hours", "type": "numeric", "text": "On average, how many hours of sleep did you get per night this week?", "scale": {"min": 0, "max": 16}},
     {"key": "phq_6", "type": "phq9",  "text": "Feeling bad about yourself — or that you are a failure?", "scale": PHQ_SCALE},
     {"key": "indirect_productive_days", "type": "calendar", "text": "Which days this week felt productive to you? Select all that apply.", "scale": None},
     {"key": "phq_7", "type": "phq9",  "text": "Trouble concentrating on things?", "scale": PHQ_SCALE},
@@ -21,10 +23,30 @@ QUESTION_BANK = [
     {"key": "phq_9", "type": "phq9",  "text": "Thoughts that you would be better off dead or hurting yourself?", "scale": PHQ_SCALE},
 ]
 
+# ── Current question bank ────────────────────────────────────────────────────
+# Every check-in question now comes from the reference questionnaire. The
+# patient's stage (app/engine/stages.py) decides which items are asked.
+from app.engine.questionnaire_reference import REFERENCE_ITEMS, reference_items_for_stage  # noqa: E402
+
+_PUBLIC_FIELDS = ("key", "type", "text", "scale")
+
+QUESTION_BANK = [{f: q[f] for f in _PUBLIC_FIELDS} for q in REFERENCE_ITEMS]
+
+# Keys a patient may answer today.
+ANSWERABLE = {q["key"]: q for q in REFERENCE_ITEMS}
+
+# Every key ever asked, for labelling past sessions.
+ALL_QUESTIONS = {**{q["key"]: q for q in LEGACY_QUESTION_BANK}, **ANSWERABLE}
+
+# Items asked at every stage — their presence drives the confidence score.
 EXPECTED_INDICATOR_KEYS = [
-    "phq_1", "phq_2", "phq_3", "phq_4", "phq_5", "phq_6", "phq_7", "phq_8", "phq_9",
-    "indirect_sleep_days", "indirect_social_days", "indirect_productive_days",
-    "sleep_hours", "rt_mean",
-    "sentiment", "journal_isolation", "journal_work_stress", "journal_sleep_disruption",
-]
-# phq_1 is derived from phq_1a + phq_1b (average); phq_5 from phq_5a + phq_5b (max)
+    q["key"] for q in REFERENCE_ITEMS
+    if q["type"] != "text" and len(q["stages"]) == 6
+] + ["rt_mean"]
+
+
+def generate_questions(stage: str) -> list[dict]:
+    """The reference items for this stage, ending with the free-text prompts."""
+    ref = reference_items_for_stage(stage)
+    ref.sort(key=lambda q: q["type"] == "text")  # free-text prompts last
+    return [{f: q[f] for f in _PUBLIC_FIELDS} for q in ref]
