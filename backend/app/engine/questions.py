@@ -50,3 +50,45 @@ def generate_questions(stage: str) -> list[dict]:
     ref = reference_items_for_stage(stage)
     ref.sort(key=lambda q: q["type"] == "text")  # free-text prompts last
     return [{f: q[f] for f in _PUBLIC_FIELDS} for q in ref]
+
+
+# ── Answer validation ────────────────────────────────────────────────────────
+import math  # noqa: E402
+
+MAX_TEXT_CHARS = 2000
+
+
+def _is_number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def validate_answer(question: dict, value):
+    """
+    Returns (clean_value, None) or (None, error message).
+    likert  – whole number within the scale (0–3)
+    numeric – finite number within the scale (e.g. sleep 0–16, meals 0–6)
+    text    – a string (empty = skipped), trimmed to MAX_TEXT_CHARS
+    """
+    qtype = question["type"]
+    scale = question.get("scale") or {}
+    if qtype in ("likert", "phq9"):
+        if not _is_number(value) or float(value) != int(value):
+            return None, "Answer must be a whole number"
+        lo, hi = scale.get("min", 0), scale.get("max", 3)
+        if not lo <= int(value) <= hi:
+            return None, f"Answer must be between {lo} and {hi}"
+        return int(value), None
+    if qtype == "numeric":
+        if not _is_number(value):
+            return None, "Answer must be a number"
+        lo, hi = scale.get("min", 0), scale.get("max", float("inf"))
+        if not lo <= value <= hi:
+            return None, f"Answer must be between {lo:g} and {hi:g}"
+        return value, None
+    if qtype == "text":
+        if value is None:
+            return "", None
+        if not isinstance(value, str):
+            return None, "Answer must be text"
+        return value.strip()[:MAX_TEXT_CHARS], None
+    return None, f"Unsupported question type: {qtype}"

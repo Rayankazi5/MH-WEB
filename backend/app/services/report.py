@@ -50,6 +50,12 @@ _DOMAIN_THRESHOLDS = {
 }
 
 
+def _type_name(pt: dict) -> str:
+    if pt["primary"] == "mixed":
+        return f'Mixed ({", ".join(pt["joint_labels"])})'
+    return pt["primary_label"]
+
+
 def _build_report_prompt(ctx: dict) -> str:
     domain_lines = json.dumps(ctx["domain_scores"], indent=2)
 
@@ -75,11 +81,13 @@ def _build_report_prompt(ctx: dict) -> str:
 
     pt = ctx.get("patient_type")
     if pt:
-        type_line = f'{pt["primary_label"]}' + (
+        type_line = _type_name(pt) + (
             f' (also elevated: {", ".join(pt["secondary_labels"])})' if pt["secondary_labels"] else ""
         )
         if pt["at_risk"]:
-            type_line = "AT RISK — safety items endorsed: " + ", ".join(pt["safety_items"]) + ". " + type_line
+            detail = "; ".join(f'{d["label"]}: {d["answer"]}' for d in pt.get("safety_details", [])) \
+                or ", ".join(pt["safety_items"])
+            type_line = f"AT RISK — {detail}. " + type_line
     else:
         type_line = "Not yet identified"
 
@@ -95,7 +103,7 @@ AVERAGE RESPONSE TIME: {rt_note}
 
 PATIENT TYPE (from the latest check-in): {type_line}
 
-PATIENT-TYPE SCORES (0.0 = low concern, 1.0 = high concern; elevated at 0.34+; includes trend vs previous period):
+PATIENT-TYPE SCORES (0.0 = low concern, 1.0 = high concern; elevated at 0.33+; includes trend vs previous period):
 {domain_lines}
 
 PROTECTIVE FACTORS (from most recent session):
@@ -124,7 +132,7 @@ def _rule_based_report(ctx: dict) -> dict:
         return f"Patient demonstrates {desc} (score {score:.2f}, trend: {trend})."
 
     domains_present = [d for d in DOMAIN_LABELS if d in domain_scores]
-    high_concern = [(d, domain_scores[d]["mean"]) for d in domains_present if domain_scores[d]["mean"] >= 0.34]
+    high_concern = [(d, domain_scores[d]["mean"]) for d in domains_present if domain_scores[d]["mean"] >= 0.33]
     high_concern.sort(key=lambda x: -x[1])
 
     if not domains_present:
@@ -147,7 +155,7 @@ def _rule_based_report(ctx: dict) -> dict:
 
     pt = ctx.get("patient_type")
     if pt:
-        summary = f"Current patient type: {pt['primary_label']}" + (
+        summary = f"Current patient type: {_type_name(pt)}" + (
             f" (also elevated: {', '.join(pt['secondary_labels'])})." if pt["secondary_labels"] else "."
         ) + " " + summary
         if pt["at_risk"]:
@@ -251,6 +259,7 @@ def build_report_context(db, patient_id, weeks: int = 4) -> dict:
             CheckInSession.patient_id == patient_id,
             CheckInSession.started_at >= cutoff,
             CheckInSession.completed_at.isnot(None),
+            CheckInSession.deleted_at.is_(None),
         )
         .all()
     )
@@ -329,6 +338,7 @@ def build_report_context(db, patient_id, weeks: int = 4) -> dict:
             CheckInSession.patient_id == patient_id,
             CheckInSession.completed_at.isnot(None),
             CheckInSession.abstained == False,
+            CheckInSession.deleted_at.is_(None),
         )
         .order_by(CheckInSession.completed_at.desc())
         .first()

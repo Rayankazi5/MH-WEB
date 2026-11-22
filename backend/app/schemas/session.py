@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class QuestionSchema(BaseModel):
@@ -16,12 +16,14 @@ class SessionStartResponse(BaseModel):
     session_id: uuid.UUID
     stage: Optional[str] = None  # see app/engine/stages.py
     questions: list[QuestionSchema]
+    # Answers already saved in this check-in (so a refreshed page can restore them)
+    answers: dict[str, Any] = {}
 
 
 class RespondRequest(BaseModel):
     question_key: str
-    raw_value: Any  # number | list[int] | string
-    response_time_ms: int
+    raw_value: Any  # checked per question type in app/engine/questions.validate_answer
+    response_time_ms: int = Field(ge=0, le=3_600_000)  # 0 ms – 1 hour
 
 
 class SessionStatusResponse(BaseModel):

@@ -90,10 +90,22 @@ ITEM_PHRASES = {
 
 SAFETY_KEYS = ("ref_self_harm", "ref_thoughts_harm_others", "ref_hopelessness")
 
-SAFETY_NOTE = (
-    "If you're having thoughts of harming yourself or someone else, please reach out to your "
-    "clinician or a local crisis line right away — you don't have to handle this alone."
-)
+_REASON_BY_KEY = {"ref_self_harm": "self", "ref_thoughts_harm_others": "others", "ref_hopelessness": "hopeless"}
+
+
+def safety_note(reasons) -> Optional[str]:
+    """Support line naming only what the patient reported ("self", "others", "hopeless")."""
+    reasons = set(reasons or [])
+    targets = [t for r, t in (("self", "yourself"), ("others", "someone else")) if r in reasons]
+    parts = []
+    if "hopeless" in reasons:
+        parts.append("feeling hopeless")
+    if targets:
+        parts.append("having thoughts of harming " + " or ".join(targets))
+    if not parts:
+        return None
+    return (f"If you're {' or '.join(parts)}, please reach out to your clinician or a local crisis "
+            "line right away — you don't have to handle this alone.")
 
 # Answer labels for the 0–3 questionnaire items, as read back to the patient
 PHQ_LABELS = ["not at all", "on several days", "more than half the days", "nearly every day"]
@@ -101,10 +113,10 @@ PHQ_LABELS = ["not at all", "on several days", "more than half the days", "nearl
 
 def _describe_score(score: float, domain: str) -> str:
     label = DOMAIN_LABELS.get(domain, domain)
-    # Scores are absolute 0–1; 0.34 ≈ an average answer of "several days".
+    # Scores are absolute 0–1; 0.33 ≈ an average answer of "several days".
     if score < 0.15:
         return f"there's no significant concern around {label} right now"
-    elif score < 0.34:
+    elif score < 0.33:
         return f"there are some mild signs around {label} worth keeping an eye on"
     elif score < 0.6:
         return f"there's noticeable strain around {label} lately"
@@ -322,21 +334,25 @@ def _rule_based_vent(free_text: str, domain_scores: dict) -> str:
     )
 
 
-def _safety_endorsed(indicators: dict) -> bool:
+def _reasons_from_answers(indicators: dict) -> list:
+    out = []
     for k in SAFETY_KEYS:
         try:
             if float(indicators.get(k, 0) or 0) > 0:
-                return True
+                out.append(_REASON_BY_KEY[k])
         except (TypeError, ValueError):
             continue
-    return False
+    return out
 
 
 def run_insight_chat(keyword: Optional[str], free_text: Optional[str],
-                     domain_scores: dict, indicators: dict, trend: Optional[str]) -> str:
+                     domain_scores: dict, indicators: dict, trend: Optional[str],
+                     safety_reasons: Optional[list] = None) -> str:
+    """safety_reasons: from the patient's unresolved safety flags; falls back to the raw answers."""
     response = _run_insight_chat(keyword, free_text, domain_scores, indicators, trend)
-    if _safety_endorsed(indicators):
-        response = response.rstrip() + "\n\n" + SAFETY_NOTE
+    note = safety_note(safety_reasons if safety_reasons is not None else _reasons_from_answers(indicators))
+    if note:
+        response = response.rstrip() + "\n\n" + note
     return response
 
 

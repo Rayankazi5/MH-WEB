@@ -10,8 +10,9 @@ added to the next check-in.
   mild     – some concern
   moderate – clear concern: broader screen
   severe   – high concern: broadest screen
-  crisis   – any safety item (self-harm, harm to others, hopelessness)
-             endorsed last time
+  crisis   – any safety item (self-harm, harm to others, hopelessness, or the
+             retired PHQ-9 item 9) endorsed last time, or a safety flag on the
+             last check-in — even if that check-in could not be scored
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from app.engine.questionnaire_reference import (
     MEALS_LOW, SAFETY_KEYS, SLEEP_HIGH_HOURS, SLEEP_LOW_HOURS,
 )
 
-_CRISIS_KEYS = set(SAFETY_KEYS)
+_CRISIS_KEYS = set(SAFETY_KEYS) | {"phq_9"}  # phq_9: retired PHQ-9 self-harm item, older check-ins
 _SCALED_TYPES = {"phq9", "likert"}
 
 
@@ -58,12 +59,20 @@ def stage_from_responses(responses: list) -> str:
 def determine_stage(db, patient_id) -> str:
     from app.models.session import Session as CheckInSession, QuestionnaireResponse
 
+    # An unresolved safety flag on the most recent submitted check-in means crisis —
+    # scored or not, and even if it has been reopened with Edit
+    from app.engine.profiles import latest_checkin, safety_items_for
+    latest = latest_checkin(db, patient_id)
+    if latest is not None and safety_items_for(db, latest):
+        return "crisis"
+
     last = (
         db.query(CheckInSession)
         .filter(
             CheckInSession.patient_id == patient_id,
             CheckInSession.completed_at.isnot(None),
             CheckInSession.abstained.is_(False),
+            CheckInSession.deleted_at.is_(None),
         )
         .order_by(CheckInSession.completed_at.desc())
         .first()

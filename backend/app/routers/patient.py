@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.deps import require_patient
 from app.database import get_db
-from app.engine.questions import ANSWERABLE, generate_questions
+from app.engine.questions import ANSWERABLE, generate_questions, validate_answer
 from app.engine.scoring import run_scoring_pipeline
 from app.engine.stages import determine_stage
 from app.engine.profiles import PROFILE_KEYS
@@ -29,17 +29,31 @@ def start_session(
     current_user: User = Depends(require_patient),
     db: Session = Depends(get_db),
 ):
-    # Return existing active (uncompleted) session if present
-    active = (
-        db.query(CheckInSession)
-        .filter(CheckInSession.patient_id == current_user.id, CheckInSession.completed_at.is_(None))
-        .first()
-    )
+    # Lock this patient's row so simultaneous "start" requests can't each create a check-in;
+    # the lock is held until this request's transaction ends.
+    db.query(User).filter(User.id == current_user.id).with_for_update().one()
+
     # Consult the reference questionnaire for this patient's stage before generating questions.
     # The stage comes from the last completed check-in, so it is stable while a session is open.
     stage = determine_stage(db, current_user.id)
+
+    # Return existing active (uncompleted) session if present, with the questions it was started
+    # with and any answers already saved
+    active = (
+        db.query(CheckInSession)
+        .filter(CheckInSession.patient_id == current_user.id, CheckInSession.completed_at.is_(None),
+                CheckInSession.deleted_at.is_(None))
+        .order_by(CheckInSession.started_at)
+        .first()
+    )
     if active:
-        return SessionStartResponse(session_id=active.id, stage=stage, questions=generate_questions(stage))
+        if not active.question_keys:  # started before question_keys existed
+            active.question_keys = [q["key"] for q in generate_questions(stage)]
+            db.commit()
+        return SessionStartResponse(
+            session_id=active.id, stage=stage,
+            questions=_session_questions(active), answers=_saved_answers(db, active.id),
+        )
 
     # Block a second completed session on the same calendar day (UTC)
     today_start = datetime.combine(date.today(), datetime.min.time())
@@ -48,17 +62,42 @@ def start_session(
         .filter(
             CheckInSession.patient_id == current_user.id,
             CheckInSession.completed_at >= today_start,
+            CheckInSession.deleted_at.is_(None),
         )
         .first()
     )
     if done_today:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="already_completed_today")
 
-    session = CheckInSession(patient_id=current_user.id, device_type="web")
+    questions = generate_questions(stage)
+    session = CheckInSession(
+        patient_id=current_user.id, device_type="web", question_keys=[q["key"] for q in questions],
+    )
     db.add(session)
     db.commit()
     db.refresh(session)
-    return SessionStartResponse(session_id=session.id, stage=stage, questions=generate_questions(stage))
+    return SessionStartResponse(session_id=session.id, stage=stage, questions=questions)
+
+
+def _session_questions(session: CheckInSession) -> list[dict]:
+    return [
+        {f: ANSWERABLE[k][f] for f in ("key", "type", "text", "scale")}
+        for k in (session.question_keys or []) if k in ANSWERABLE
+    ]
+
+
+def _saved_answers(db: Session, session_id) -> dict:
+    from app.services.encryption import decrypt
+    out = {}
+    for r in db.query(QuestionnaireResponse).filter(QuestionnaireResponse.session_id == session_id).all():
+        if r.question_type == "text":
+            try:
+                out[r.question_key] = decrypt(r.raw_value)
+            except Exception:
+                out[r.question_key] = ""
+        else:
+            out[r.question_key] = r.raw_value
+    return out
 
 
 @router.post("/session/{session_id}/reset", status_code=status.HTTP_200_OK)
@@ -67,10 +106,15 @@ def reset_session(
     current_user: User = Depends(require_patient),
     db: Session = Depends(get_db),
 ):
-    """Re-open a completed session so the patient can re-answer all questions."""
+    """Re-open a completed session so the patient can review and change their answers.
+
+    The check-in reopens on the review screen with its answers. Its scores and flags stay in
+    place (shown as the last submitted result) until it is submitted again.
+    """
     session = (
         db.query(CheckInSession)
-        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id)
+        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id,
+                CheckInSession.deleted_at.is_(None))
         .first()
     )
     if not session:
@@ -80,10 +124,9 @@ def reset_session(
     session.completed_at = None
     session.abstained = False
 
-    # Wipe child records so scoring starts fresh
-    db.query(QuestionnaireResponse).filter(QuestionnaireResponse.session_id == session_id).delete()
-    db.query(DomainScore).filter(DomainScore.session_id == session_id).delete()
-    db.query(DissonanceFlag).filter(DissonanceFlag.session_id == session_id).delete()
+    # Answers, scores and flags are all kept: until the patient resubmits, every screen keeps
+    # showing the last submitted result. Resubmitting replaces the scores and non-safety flags;
+    # safety flags are never removed by an edit (see run_scoring_pipeline).
 
     db.commit()
     return {"session_id": str(session_id), "status": "reset"}
@@ -97,13 +140,35 @@ def delete_session(
 ):
     session = (
         db.query(CheckInSession)
-        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id)
+        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id,
+                CheckInSession.deleted_at.is_(None))
         .first()
     )
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    db.delete(session)
+    # A check-in with a safety flag is hidden from the patient but kept, with its answers and
+    # safety flags, so the clinician still sees what was reported. Anything else is deleted.
+    from app.engine.profiles import SAFETY_FLAG_TYPES
+    from app.engine.scoring import DELETED_NOTE
+    safety_flags = (
+        db.query(DissonanceFlag)
+        .filter(DissonanceFlag.session_id == session_id, DissonanceFlag.flag_type.in_(SAFETY_FLAG_TYPES))
+        .all()
+    )
+    if not safety_flags:
+        db.delete(session)
+        db.commit()
+        return
+
+    session.deleted_at = datetime.utcnow()
+    db.query(DomainScore).filter(DomainScore.session_id == session_id).delete(synchronize_session=False)
+    db.query(DissonanceFlag).filter(
+        DissonanceFlag.session_id == session_id, DissonanceFlag.flag_type.notin_(SAFETY_FLAG_TYPES),
+    ).delete(synchronize_session=False)
+    for f in safety_flags:
+        if DELETED_NOTE not in (f.self_report_val or ""):
+            f.self_report_val = f"{f.self_report_val} {DELETED_NOTE}"
     db.commit()
 
 
@@ -116,7 +181,8 @@ def respond(
 ):
     session = (
         db.query(CheckInSession)
-        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id)
+        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id,
+                CheckInSession.deleted_at.is_(None))
         .first()
     )
     if not session:
@@ -124,9 +190,11 @@ def respond(
     if session.completed_at:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session already completed")
 
-    # Validate question key
+    # Validate question key — must be one of the questions this check-in asked
     if payload.question_key not in ANSWERABLE:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown question key")
+    if session.question_keys and payload.question_key not in session.question_keys:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Question not part of this check-in")
 
     # Upsert — allow re-answering before completion
     existing = (
@@ -139,10 +207,12 @@ def respond(
     )
     question_meta = ANSWERABLE[payload.question_key]
 
-    raw_value = payload.raw_value
+    raw_value, problem = validate_answer(question_meta, payload.raw_value)
+    if problem:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem)
     if question_meta["type"] == "text":
         # Free-text answers are as sensitive as journals — store encrypted.
-        raw_value = encrypt(str(raw_value or "")[:2000])
+        raw_value = encrypt(raw_value)
 
     if existing:
         existing.raw_value = raw_value
@@ -170,13 +240,30 @@ def complete_session(
 ):
     session = (
         db.query(CheckInSession)
-        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id)
+        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id,
+                CheckInSession.deleted_at.is_(None))
         .first()
     )
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     if session.completed_at:
         return {"status": "abstained" if session.abstained else "scored"}
+
+    # Every question except the optional free-text ones must be answered before submitting
+    if session.question_keys:
+        answered = {
+            k for (k,) in db.query(QuestionnaireResponse.question_key)
+            .filter(QuestionnaireResponse.session_id == session_id).all()
+        }
+        missing = [
+            k for k in session.question_keys
+            if k in ANSWERABLE and ANSWERABLE[k]["type"] != "text" and k not in answered
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"message": "Please answer every question before submitting", "missing": missing},
+            )
 
     session.completed_at = datetime.utcnow()
     db.commit()
@@ -266,7 +353,8 @@ def submit_journal(
     if session_id is not None:
         session = (
             db.query(CheckInSession)
-            .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id)
+            .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id,
+                CheckInSession.deleted_at.is_(None))
             .first()
         )
         if not session:
@@ -297,7 +385,7 @@ def list_sessions(
 ):
     sessions = (
         db.query(CheckInSession)
-        .filter(CheckInSession.patient_id == current_user.id)
+        .filter(CheckInSession.patient_id == current_user.id, CheckInSession.deleted_at.is_(None))
         .order_by(CheckInSession.started_at.desc())
         .limit(limit)
         .all()
@@ -311,6 +399,16 @@ def list_sessions(
         }
         for s in sessions
     ]
+
+
+@router.get("/wellbeing")
+def wellbeing(
+    current_user: User = Depends(require_patient),
+    db: Session = Depends(get_db),
+):
+    """The patient's S1–S4 badge. At risk (any unresolved safety flag) is always S2."""
+    from app.engine.profiles import patient_badge
+    return patient_badge(db, current_user.id)
 
 
 @router.get("/history")
@@ -358,6 +456,7 @@ def patient_insights(
             CheckInSession.patient_id == current_user.id,
             CheckInSession.completed_at.isnot(None),
             CheckInSession.abstained == False,
+            CheckInSession.deleted_at.is_(None),
         )
         .order_by(CheckInSession.completed_at.desc())
         .first()
@@ -420,7 +519,11 @@ def patient_insights(
                 else:
                     trend = "staying fairly stable"
 
-    response_text = run_insight_chat(keyword, payload.free_text, domain_scores, raw_indicators, trend)
+    from app.engine.profiles import latest_checkin, safety_reasons
+    latest_any = latest_checkin(db, current_user.id)
+    reasons = safety_reasons(db, latest_any) if latest_any is not None else []
+    response_text = run_insight_chat(keyword, payload.free_text, domain_scores, raw_indicators, trend,
+                                     safety_reasons=reasons)
     return {"response": response_text, "keyword": keyword}
 
 
@@ -432,7 +535,8 @@ def session_status(
 ):
     session = (
         db.query(CheckInSession)
-        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id)
+        .filter(CheckInSession.id == session_id, CheckInSession.patient_id == current_user.id,
+                CheckInSession.deleted_at.is_(None))
         .first()
     )
     if not session:

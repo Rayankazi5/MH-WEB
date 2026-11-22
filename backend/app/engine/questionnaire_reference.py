@@ -115,6 +115,14 @@ SLEEP_HIGH_HOURS = 12
 MEALS_LOW = 1.5
 
 REFERENCE_BY_KEY = {q["key"]: q for q in REFERENCE_ITEMS}
+
+# Clinician-facing wording for the safety items (used in flags and the At risk banner)
+SAFETY_LABELS = {
+    "ref_self_harm": "Feelings of wanting to harm themself",
+    "ref_thoughts_harm_others": "Thoughts of hurting someone else",
+    "ref_hopelessness": "Feelings of hopelessness",
+}
+ANSWER_LABELS = FREQUENCY_SCALE["labels"]
 SAFETY_KEYS = [q["key"] for q in REFERENCE_ITEMS if q["safety"]]
 
 

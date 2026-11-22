@@ -18,6 +18,11 @@ class Session(Base):
     device_type = Column(String, nullable=True)  # "mobile" | "web"
     abstained = Column(Boolean, default=False, nullable=False)
     uncertainty_val = Column(Float, nullable=True)
+    # Keys of the questions this check-in asked (stage-dependent); null on older check-ins
+    question_keys = Column(JSONB, nullable=True)
+    # Set when the patient deletes a check-in that has safety flags: hidden from the patient,
+    # kept for the clinician. Check-ins without safety flags are deleted outright.
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     patient = relationship("User", back_populates="sessions", foreign_keys=[patient_id])
     responses = relationship("QuestionnaireResponse", back_populates="session", cascade="all, delete-orphan")
@@ -32,7 +37,7 @@ class QuestionnaireResponse(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
     question_key = Column(Text, nullable=False)
-    question_type = Column(Text, nullable=False)  # "phq9" | "indirect" | "calendar" | "numeric"
+    question_type = Column(Text, nullable=False)  # "likert" | "numeric" | "text" (legacy: "phq9" | "calendar")
     raw_value = Column(JSONB, nullable=False)
     normalised_val = Column(Float, nullable=True)
     response_time_ms = Column(Integer, nullable=True)

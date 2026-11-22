@@ -6,6 +6,9 @@ function extractError(body: unknown, fallback: string): string {
   if (!body || typeof body !== 'object') return fallback
   const { detail } = body as { detail?: unknown }
   if (typeof detail === 'string') return detail
+  if (detail && typeof detail === 'object' && 'message' in detail) {
+    return String((detail as { message: unknown }).message)
+  }
   if (Array.isArray(detail) && detail.length > 0) {
     const first = detail[0] as Record<string, unknown>
     return typeof first?.msg === 'string' ? first.msg : fallback
@@ -77,6 +80,8 @@ export interface AuthUser {
 export interface PatientType {
   primary: string
   primary_label: string
+  joint?: string[]
+  joint_labels?: string[]
   secondary: string[]
   secondary_labels: string[]
   at_risk: boolean
@@ -85,6 +90,9 @@ export interface PatientType {
   threshold: number
   session_id?: string
   session_date?: string | null
+  scores_pending?: boolean
+  safety_details?: { item: string; label: string; answer: string }[]
+  being_edited?: boolean
 }
 
 export interface PatientSummary {
@@ -191,6 +199,7 @@ export interface Question {
 export interface SessionStart {
   session_id: string
   stage?: string
+  answers?: Record<string, number | number[] | string>
   questions: Question[]
 }
 
@@ -314,6 +323,7 @@ export const api = {
 
     sessions: () => patientRequest<SessionHistoryItem[]>('/patient/sessions'),
 
+    wellbeing: () => patientRequest<{ badge: string; at_risk: boolean; checked_in: boolean; risk: { pct: number | null; label: string; reason: string | null }; safety_reasons?: string[] }>('/patient/wellbeing'),
     history: () => patientRequest<{ domain: string; score: number; confidence: number; date: string }[]>('/patient/history'),
 
     insight: (body: { keyword?: string; free_text?: string }) =>

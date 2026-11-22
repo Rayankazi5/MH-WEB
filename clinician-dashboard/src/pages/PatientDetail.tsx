@@ -188,8 +188,9 @@ function SessionResponseRow({ session, expanded, onToggle }: {
     ? new Date(session.completed_at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
     : new Date(session.started_at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
 
-  const statusColor = session.status === 'done' ? '#34d399' : session.status === 'abstained' ? '#f87171' : '#fbbf24'
-  const statusLabel = session.status === 'done' ? 'Scored' : session.status === 'abstained' ? 'Abstained' : 'In progress'
+  const statusColor = session.status === 'deleted_by_patient' ? '#dc2626' : session.status === 'done' ? '#34d399' : session.status === 'abstained' ? '#f87171' : '#fbbf24'
+  const statusLabel = session.status === 'deleted_by_patient' ? 'Deleted by patient · kept for safety review'
+    : session.status === 'done' ? 'Scored' : session.status === 'abstained' ? 'Abstained' : 'In progress'
 
   return (
     <div style={{ border: '1px solid rgba(0,0,0,0.08)', borderRadius: '10px', overflow: 'hidden', background: '#fff' }}>

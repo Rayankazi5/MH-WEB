@@ -40,7 +40,7 @@ WEEK: {ctx["week_start"]} to {ctx["week_end"]}
 SESSIONS COMPLETED: {ctx["completed"]} of {ctx["expected"]}
 SESSIONS ABSTAINED: {ctx["abstained"]}
 
-PATIENT-TYPE SCORES (0.0 = low concern, 1.0 = high concern; elevated at 0.34+):
+PATIENT-TYPE SCORES (0.0 = low concern, 1.0 = high concern; elevated at 0.33+):
 {domain_lines}
 
 JOURNAL THEMES (keyword clusters — not verbatim text):
@@ -100,6 +100,7 @@ def build_narrative_context(db, patient_id, week_start: date) -> Optional[dict]:
             Session.started_at >= week_start,
             Session.started_at <= week_end,
             Session.completed_at.isnot(None),
+            Session.deleted_at.is_(None),
         )
         .all()
     )

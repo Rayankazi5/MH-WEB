@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useShell, STAGES } from './Shell'
+import { useShell, STAGES, stageName } from './Shell'
 
 const POSTS = [
   { name: 'R.M.', time: '2h ago', text: 'Box breathing helped me through a tough morning. Sharing the technique if anyone wants it 💙', tags: ['S4'], likes: 14 },
@@ -11,7 +11,7 @@ export default function PatientCommunity() {
   const { c, stage } = useShell()
   const [liked, setLiked] = useState<Set<number>>(new Set())
 
-  const allowed = stage === 'S1' || stage === 'S4'
+  const allowed = stage === 'S1' || stage === 'S4' || stage === 'NONE'
 
   if (!allowed) {
     const stageInfo = STAGES[stage]
@@ -29,7 +29,7 @@ export default function PatientCommunity() {
             Community is available in stable or recovery phases (S1 / S4). This protects everyone — including you — during more vulnerable periods.
           </p>
           <p style={{ color: c.txt3, fontSize: 13, marginBottom: 20 }}>
-            Current stage: <strong style={{ color: stageInfo.clr }}>{stage} · {stageInfo.label}</strong>
+            Current stage: <strong style={{ color: stageInfo.clr }}>{stageName(stage)}</strong>
           </p>
           <div style={{ padding: '14px 16px', background: `${c.pri}10`, border: `1px solid ${c.pri}22`, borderRadius: 14 }}>
             <p style={{ color: c.txt2, fontSize: 13 }}>
@@ -54,7 +54,7 @@ export default function PatientCommunity() {
         background: 'rgba(74,222,128,.1)', border: '1px solid rgba(74,222,128,.25)',
         fontSize: 12, fontWeight: 700, color: '#4ADE80',
       }}>
-        ● You are in {stage} · {STAGES[stage].label}
+        ● {stage === 'NONE' ? STAGES.NONE.label : `You are in ${stageName(stage)}`}
       </div>
 
       {POSTS.map((p, i) => (

@@ -21,8 +21,8 @@ export function NumericQuestion({ question, onAnswer }: Props) {
   const submit = () => {
     const num = parseFloat(value)
     if (isNaN(num) || submitted) return
-    const min = question.min ?? 0
-    const max = question.max ?? 24
+    const min = question.min ?? question.scale?.min ?? 0
+    const max = question.max ?? question.scale?.max ?? 24
     if (num < min || num > max) return
     setSubmitted(true)
     const rtMs = Date.now() - startedAt.current
@@ -30,8 +30,8 @@ export function NumericQuestion({ question, onAnswer }: Props) {
   }
 
   const num = parseFloat(value)
-  const min = question.min ?? 0
-  const max = question.max ?? 24
+  const min = question.min ?? question.scale?.min ?? 0
+  const max = question.max ?? question.scale?.max ?? 24
   const isValid = !isNaN(num) && num >= min && num <= max
 
   return (

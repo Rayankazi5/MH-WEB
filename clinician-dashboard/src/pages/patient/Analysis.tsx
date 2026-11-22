@@ -23,12 +23,25 @@ const DOMAIN_LABELS: Record<string, string> = {
   interpersonal: 'Relationships',
 }
 
+// Names only what the patient reported: "self", "others" and/or "hopeless"
+function supportMessage(reasons: string[]): string {
+  const targets = [reasons.includes('self') && 'yourself', reasons.includes('others') && 'someone else'].filter(Boolean)
+  const parts: string[] = []
+  if (reasons.includes('hopeless')) parts.push('been feeling hopeless')
+  if (targets.length) parts.push(`had thoughts of harming ${targets.join(' or ')}`)
+  const told = parts.length ? `You told us you've ${parts.join(' and ')}. ` : ''
+  return `${told}Please contact your clinician or a crisis line — iCall 9152987821 · Vandrevala 1860-2662-345.`
+}
+
 export default function PatientAnalysis() {
   const { c } = useShell()
 
   const [scores, setScores] = useState<{ domain: string; score: number; date: string }[]>([])
   const [moodPoints, setMoodPoints] = useState<number[]>([])
-  const [verdictOk, setVerdictOk] = useState(true)
+  // From the server: 'none' (no check-in yet), 'ok', 'attention', or 'safety' (a safety answer)
+  const [verdict, setVerdict] = useState<'none' | 'ok' | 'attention' | 'safety'>('none')
+  const verdictOk = verdict === 'ok'
+  const [safetyReasons, setSafetyReasons] = useState<string[]>([])
   const [xaiOpen, setXaiOpen] = useState(false)
 
   const [explored, setExplored] = useState<Set<string>>(new Set())
@@ -46,12 +59,10 @@ export default function PatientAnalysis() {
         .slice(-7)
         .map(d => Math.round((1 - d.score) * 100))
       if (mood.length > 0) setMoodPoints(mood)
-
-      const recent = data.slice(-5)
-      if (recent.length) {
-        const avg = recent.reduce((s, r) => s + r.score, 0) / recent.length
-        setVerdictOk(avg < 0.4)
-      }
+    }).catch(() => {})
+    api.patient.wellbeing().then(w => {
+      setSafetyReasons(w.safety_reasons ?? [])
+      setVerdict(w.risk.reason === 'safety' ? 'safety' : w.risk.label === 'No data' ? 'none' : w.risk.label === 'Low' ? 'ok' : 'attention')
     }).catch(() => {})
   }, [])
 
@@ -85,8 +96,9 @@ export default function PatientAnalysis() {
     }
   }
 
-  // Build chart points from mood data (or placeholder)
-  const chartData = moodPoints.length >= 2 ? moodPoints : [55, 60, 48, 72, 68, 75, 72]
+  // Chart only real mood data — with fewer than 2 check-ins there is nothing to plot
+  const hasTrend = moodPoints.length >= 2
+  const chartData = hasTrend ? moodPoints : [0, 0]
   const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].slice(0, chartData.length)
   const hi = Math.max(...chartData), lo = Math.min(...chartData)
   const ny = (v: number) => 90 - ((v - lo) / (hi - lo + 1)) * 76
@@ -118,7 +130,12 @@ export default function PatientAnalysis() {
         <div style={{ color: c.txt3, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 12 }}>
           Mood Trend
         </div>
-        <svg width="100%" viewBox="0 0 310 105" style={{ overflow: 'visible' }}>
+        {!hasTrend && (
+          <p style={{ color: c.txt3, fontSize: 13, margin: '8px 0 4px' }}>
+            Your mood trend appears after two or more check-ins.
+          </p>
+        )}
+        {hasTrend && <svg width="100%" viewBox="0 0 310 105" style={{ overflow: 'visible' }}>
           <defs>
             <linearGradient id="arxGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={c.pri} stopOpacity={0.3} />
@@ -136,12 +153,12 @@ export default function PatientAnalysis() {
           {days.map((d, i) => (
             <text key={d} x={(i / Math.max(days.length - 1, 1)) * (W - 40) + 20} y={104} textAnchor="middle" fontSize={9} fill={c.txt3} fontFamily="Nunito, sans-serif">{d}</text>
           ))}
-        </svg>
+        </svg>}
       </div>
 
       {/* Verdict */}
       <div style={{
-        background: verdictOk ? 'rgba(74,222,128,.08)' : 'rgba(251,146,60,.08)',
+        background: verdictOk ? 'rgba(74,222,128,.08)' : verdict === 'safety' ? 'rgba(248,113,113,.1)' : 'rgba(251,146,60,.08)',
         border: `1px solid ${verdictOk ? 'rgba(74,222,128,.2)' : 'rgba(251,146,60,.22)'}`,
         borderRadius: 20, padding: '16px 18px', marginBottom: 14,
         display: 'flex', gap: 14, alignItems: 'center',
@@ -151,16 +168,19 @@ export default function PatientAnalysis() {
           background: verdictOk ? 'rgba(74,222,128,.15)' : 'rgba(251,146,60,.15)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
         }}>
-          {verdictOk ? '✅' : '📊'}
+          {verdictOk ? '✅' : verdict === 'safety' ? '🆘' : verdict === 'none' ? '📋' : '📊'}
         </div>
         <div>
-          <div style={{ fontWeight: 700, color: verdictOk ? '#4ADE80' : '#FB923C', fontSize: 14, marginBottom: 2 }}>
-            {verdictOk ? 'Patterns Stable' : 'Patterns Need Attention'}
+          <div style={{ fontWeight: 700, color: verdictOk ? '#4ADE80' : verdict === 'safety' ? '#F87171' : verdict === 'none' ? '#9CA3AF' : '#FB923C', fontSize: 14, marginBottom: 2 }}>
+            {{ none: 'No check-ins yet', ok: 'Patterns Stable', attention: 'Patterns Need Attention', safety: 'Please reach out for support' }[verdict]}
           </div>
           <div style={{ color: c.txt2, fontSize: 13 }}>
-            {verdictOk
-              ? 'Your behavioural signals are within a healthy range. Keep it up.'
-              : 'Some areas show elevated concern. Check insights below for details.'}
+            {{
+              none: 'Complete a check-in to see your patterns here.',
+              ok: 'Your behavioural signals are within a healthy range. Keep it up.',
+              attention: 'Some areas show elevated concern. Check insights below for details.',
+              safety: supportMessage(safetyReasons),
+            }[verdict]}
           </div>
         </div>
       </div>

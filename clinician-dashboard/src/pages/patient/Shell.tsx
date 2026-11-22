@@ -26,6 +26,7 @@ export const STAGES = {
   S2: { label: 'Crisis',    clr: '#F87171', msg: 'Immediate support recommended.', icon: '⚠️' },
   S3: { label: 'Seek Help', clr: '#FB923C', msg: 'Consider reaching out to a professional.', icon: '🤝' },
   S4: { label: 'Coping',    clr: '#60A5FA', msg: 'Active recovery in progress.', icon: '💙' },
+  NONE: { label: 'Not checked in yet', clr: '#9CA3AF', msg: 'Complete a check-in to see how you’re doing.', icon: '📋' },
 }
 export type StageKey = keyof typeof STAGES
 
@@ -37,20 +38,12 @@ interface ShellCtx {
   stage: StageKey
 }
 
-const Ctx = createContext<ShellCtx>({ c: DARK, dark: true, setDark: () => {}, stage: 'S1' })
+const Ctx = createContext<ShellCtx>({ c: DARK, dark: true, setDark: () => {}, stage: 'NONE' })
 export const useShell = () => useContext(Ctx)
 
-// ── Stage derivation from domain scores ──────────────────────────────────────
-function deriveStage(scores: { domain: string; score: number }[]): StageKey {
-  if (!scores.length) return 'S1'
-  const avg = scores.reduce((s, r) => s + r.score, 0) / scores.length
-  const mood = scores.find(r => r.domain === 'depressive')?.score ?? avg
-  const anxiety = scores.find(r => r.domain === 'anxious')?.score ?? avg
-  if (mood > 0.5 || anxiety > 0.5) return 'S2'
-  if (avg > 0.35) return 'S3'
-  if (avg > 0.22) return 'S4'
-  return 'S1'
-}
+// Badge text: "S2 Crisis", or just "Not checked in yet"
+export const stageName = (stage: StageKey, sep = ' · ') =>
+  stage === 'NONE' ? STAGES.NONE.label : `${stage}${sep}${STAGES[stage].label}`
 
 // ── Nav items ─────────────────────────────────────────────────────────────────
 const NAV = [
@@ -66,19 +59,17 @@ export default function PatientShell({ children }: { children: React.ReactNode }
   const location = useLocation()
   const { logout } = usePatientAuth()
   const [dark, setDark] = useState(true)
-  const [stage, setStage] = useState<StageKey>('S1')
+  const [stage, setStage] = useState<StageKey>('NONE')
 
   const c = dark ? DARK : LIGHT
 
+  // Badge comes from the server so it always agrees with the clinician view
+  // (an unresolved safety flag is always S2). Refetched on every page change.
   useEffect(() => {
-    api.patient.history()
-      .then(scores => {
-        // use latest 5 scores (most recent session)
-        const recent = scores.slice(-5)
-        setStage(deriveStage(recent))
-      })
+    api.patient.wellbeing()
+      .then(w => setStage(w.badge in STAGES ? (w.badge as StageKey) : 'NONE'))
       .catch(() => {})
-  }, [])
+  }, [location.pathname])
 
   const stageInfo = STAGES[stage]
   const currentPath = location.pathname
@@ -141,7 +132,7 @@ export default function PatientShell({ children }: { children: React.ReactNode }
               background: `${stageInfo.clr}18`, color: stageInfo.clr,
               border: `1px solid ${stageInfo.clr}35`,
             }}>
-              ● {stage} {stageInfo.label}
+              ● {stageName(stage, ' ')}
             </span>
             <button onClick={() => setDark(!dark)} style={{
               background: c.acc, border: `1px solid ${c.bdr}`,

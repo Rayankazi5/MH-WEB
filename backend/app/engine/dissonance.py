@@ -1,11 +1,15 @@
 from typing import List, Dict, Any, Callable
 
 from app.engine.questionnaire_reference import (
-    MEALS_LOW, SAFETY_KEYS, SLEEP_HIGH_HOURS, SLEEP_LOW_HOURS,
+    ANSWER_LABELS, MEALS_LOW, SAFETY_KEYS, SAFETY_LABELS, SLEEP_HIGH_HOURS, SLEEP_LOW_HOURS,
 )
 from app.services.mental_health_classifier import SUICIDAL_RISK_THRESHOLD
 
 _SELF_REPORT_SAFETY_KEYS = list(SAFETY_KEYS)
+
+
+def _answer_label(normalised: float) -> str:
+    return ANSWER_LABELS[max(0, min(3, round(normalised * 3)))]
 
 
 def _endorsed_safety_items(ind: dict) -> list[str]:
@@ -43,7 +47,7 @@ DISSONANCE_RULES: list[_Rule] = [
     {
         "flag_type": "social_report_vs_withdrawal",
         "condition": lambda ind: (
-            ind.get("ref_loneliness", 1.0) < 0.34       # reports little or no loneliness
+            ind.get("ref_loneliness", 1.0) < 0.33       # reports little or no loneliness
             and ind.get("journal_isolation", 0) > 0.6
         ),
         "self_report_val": "Patient reports little or no loneliness",
@@ -63,8 +67,24 @@ DISSONANCE_RULES: list[_Rule] = [
     {
         "flag_type": "self_reported_safety_concern",
         "condition": lambda ind: bool(_endorsed_safety_items(ind)),
-        "self_report_val": lambda ind: "Endorsed: " + ", ".join(_endorsed_safety_items(ind)),
-        "signal_val": "Patient self-reported self-harm, harm to others, or hopelessness",
+        # e.g. "Thoughts of hurting someone else: Several days; Feelings of hopelessness: Several days"
+        "self_report_val": lambda ind: "; ".join(
+            f"{SAFETY_LABELS[k]}: {_answer_label(ind[k])}" for k in _endorsed_safety_items(ind)
+        ),
+        "signal_val": lambda ind: "Patient self-reported " + " and ".join(
+            {"ref_self_harm": "thoughts of self-harm", "ref_thoughts_harm_others": "thoughts of harming others",
+             "ref_hopelessness": "hopelessness"}[k] for k in _endorsed_safety_items(ind)
+        ),
+        "severity": "high",
+    },
+    {
+        "flag_type": "free_text_risk_language",
+        "condition": lambda ind: ind.get("text_risk_self", 0) > 0 or ind.get("text_risk_others", 0) > 0,
+        "self_report_val": lambda ind: "Free-text answer mentions " + " and ".join(
+            w for w, k in (("harming themself", "text_risk_self"), ("harming others", "text_risk_others"))
+            if ind.get(k, 0) > 0
+        ),
+        "signal_val": "Keyword screen of free-text check-in answers (errs towards flagging — please review)",
         "severity": "high",
     },
     {

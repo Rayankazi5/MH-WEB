@@ -255,6 +255,7 @@ def patient_protective_factors(
             CheckInSession.patient_id == patient_id,
             CheckInSession.completed_at.isnot(None),
             CheckInSession.abstained == False,
+            CheckInSession.deleted_at.is_(None),
         )
         .order_by(CheckInSession.completed_at.desc())
         .first()
@@ -302,7 +303,9 @@ def patient_sessions(
 
     result = []
     for s in sessions:
-        if s.abstained:
+        if s.deleted_at is not None:
+            session_status = "deleted_by_patient"  # kept only because it has safety flags
+        elif s.abstained:
             session_status = "abstained"
         elif s.completed_at:
             session_status = "done"
@@ -364,6 +367,7 @@ def patient_sessions(
             "started_at": s.started_at.isoformat() if s.started_at else None,
             "completed_at": s.completed_at.isoformat() if s.completed_at else None,
             "status": session_status,
+            "deleted_at": s.deleted_at.isoformat() if s.deleted_at else None,
             "responses": formatted_responses,
         })
 

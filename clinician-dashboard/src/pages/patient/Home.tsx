@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePatientAuth } from '../../contexts/PatientAuthContext'
 import { api, type SessionHistoryItem } from '../../services/api'
-import { useShell, STAGES } from './Shell'
+import { useShell, STAGES, stageName } from './Shell'
 
 function isToday(d: string | null) {
   return !!d && new Date(d).toDateString() === new Date().toDateString()
@@ -20,27 +20,24 @@ export default function PatientHome() {
   const navigate = useNavigate()
 
   const [history, setHistory] = useState<SessionHistoryItem[]>([])
-  const [metricVals, setMetricVals] = useState<number[]>([])
-  const [riskPct, setRiskPct] = useState(21)
+  const [metricVals, setMetricVals] = useState<(number | null)[]>([])
+  // Risk Rate comes from the server: an unresolved safety answer is always High
+  const [risk, setRisk] = useState<{ pct: number | null; label: string; reason: string | null }>({ pct: null, label: 'No data', reason: null })
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [editBusy, setEditBusy] = useState<string | null>(null)
 
   useEffect(() => {
     api.patient.sessions().then(setHistory).catch(() => {})
+    api.patient.wellbeing().then(w => setRisk(w.risk)).catch(() => {})
     api.patient.history().then(scores => {
-      // Derive simple display percentages from latest domain scores
+      // Display percentages from the latest type scores (null = no data yet, shown as "—")
       const get = (domain: string) => {
         const rows = scores.filter(s => s.domain === domain)
-        if (!rows.length) return 50
+        if (!rows.length) return null
         const avg = rows.slice(-3).reduce((a, r) => a + r.score, 0) / Math.min(rows.length, 3)
         return Math.round((1 - avg) * 100) // invert: low concern = high %
       }
       setMetricVals([get('depressive'), get('anxious'), get('interpersonal')])
-      const allScores = scores.slice(-5)
-      if (allScores.length) {
-        const avg = allScores.reduce((a, r) => a + r.score, 0) / allScores.length
-        setRiskPct(Math.round(avg * 100))
-      }
     }).catch(() => {})
   }, [])
 
@@ -51,7 +48,7 @@ export default function PatientHome() {
     setEditBusy(sessionId)
     try {
       await api.patient.resetSession(sessionId)
-      navigate('/patient/checkin')
+      navigate('/patient/checkin', { state: { autoStart: true } })  // opens on the review screen
     } catch { setEditBusy(null) }
   }
 
@@ -70,11 +67,13 @@ export default function PatientHome() {
 
   const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
-  const riskClr = riskPct < 30 ? '#4ADE80' : riskPct < 60 ? '#FB923C' : '#F87171'
-  const riskLabel = riskPct < 30 ? 'Low' : riskPct < 60 ? 'Moderate' : 'High'
+  const riskClr = { Low: '#4ADE80', Moderate: '#FB923C', High: '#F87171' }[risk.label] ?? '#9CA3AF'
+  const riskLabel = risk.reason === 'safety' ? 'High · safety' : risk.label
+  // Ring fill: full for a safety concern, empty with no data
+  const riskFill = risk.reason === 'safety' ? 100 : risk.pct ?? 0
   const circumference = 2 * Math.PI * 23
 
-  const displayMetrics = METRICS.map((m, i) => ({ ...m, val: metricVals[i] ?? 60 }))
+  const displayMetrics = METRICS.map((m, i) => ({ ...m, val: metricVals[i] ?? null }))
 
   return (
     <div style={{ paddingTop: 6 }}>
@@ -112,7 +111,7 @@ export default function PatientHome() {
       }}>
         <div>
           <div style={{ fontSize: 11, fontWeight: 800, color: stageInfo.clr, letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 5 }}>
-            {stage} · {stageInfo.label}
+            {stageName(stage)}
           </div>
           <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 21, color: c.txt, fontWeight: 500 }}>
             {stageInfo.msg}
@@ -133,9 +132,9 @@ export default function PatientHome() {
         {displayMetrics.map(m => (
           <div key={m.label} className="arx-card" style={{ padding: '14px 10px', textAlign: 'center', margin: 0 }}>
             <div style={{ color: c.txt3, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 7 }}>{m.label}</div>
-            <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 30, fontWeight: 600, color: m.clr, lineHeight: 1 }}>{m.val}</div>
+            <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 30, fontWeight: 600, color: m.clr, lineHeight: 1 }}>{m.val ?? '—'}</div>
             <div className="arx-prog" style={{ marginTop: 8 }}>
-              <div className="arx-prog-fill" style={{ width: `${m.val}%`, background: m.clr }} />
+              <div className="arx-prog-fill" style={{ width: `${m.val ?? 0}%`, background: m.clr }} />
             </div>
           </div>
         ))}
@@ -151,10 +150,10 @@ export default function PatientHome() {
           <svg width={60} height={60} viewBox="0 0 60 60">
             <circle cx={30} cy={30} r={23} fill="none" stroke={c.acc} strokeWidth={6} />
             <circle cx={30} cy={30} r={23} fill="none" stroke={riskClr} strokeWidth={6}
-              strokeDasharray={`${(riskPct / 100) * circumference} ${circumference}`}
+              strokeDasharray={`${(riskFill / 100) * circumference} ${circumference}`}
               strokeLinecap="round" transform="rotate(-90 30 30)" />
           </svg>
-          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, fontWeight: 600, color: riskClr, marginTop: 4 }}>{riskPct}</div>
+          <div style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, fontWeight: 600, color: riskClr, marginTop: 4 }}>{risk.reason === 'safety' ? '!' : risk.pct ?? '—'}</div>
           <div style={{ color: riskClr, fontSize: 10, fontWeight: 700 }}>{riskLabel}</div>
         </div>
 

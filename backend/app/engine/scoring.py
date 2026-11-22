@@ -8,6 +8,11 @@ from app.engine.profiles import PROFILE_KEYS, compute_profile_scores
 DOMAINS = PROFILE_KEYS
 ABSTAIN_THRESHOLD = 0.55
 
+# Appended to a kept safety flag when the patient's edited answers no longer raise it
+EDITED_NOTE = "(answer later changed by patient — originally reported as above)"
+# Appended to a safety flag when the patient deletes its check-in (the flag and answers are kept)
+DELETED_NOTE = "(check-in deleted by patient — kept for clinician review)"
+
 
 def apply_differential_privacy(scores: dict, epsilon: float) -> dict:
     """
@@ -70,31 +75,11 @@ def extract_indicators(responses: list, journal=None) -> dict:
     rt_values: list = []
 
     for r in responses:
-        key = r.question_key
-        val = r.raw_value
-        rt = r.response_time_ms
-
-        if rt is not None:
-            normalised_rt = normalise_rt(float(rt))
-            rt_values.append(normalised_rt)
-            indicators[f"rt_{key}"] = normalised_rt
-
-        if r.question_type == "text":
-            continue  # free-text (encrypted) — not scored
-        if r.question_type in ("phq9", "likert"):
-            indicators[key] = normalise_phq(float(val))
-        elif r.question_type == "calendar":
-            days = len(val) if isinstance(val, list) else int(val)
-            indicators[key] = normalise_calendar_inverted(days)
-        elif r.question_type == "numeric" and key == "sleep_hours":
-            hours = float(val)
-            indicators[key] = normalise_sleep_concern(hours)
-            indicators["sleep_hours_raw"] = hours
-        elif r.question_type == "numeric" and key == "meals_per_day":
-            indicators["meals_per_day_raw"] = float(val)
-            indicators[key] = normalise_meals_concern(float(val))
-        elif r.question_type == "numeric":
-            indicators[key] = max(0.0, min(1.0, float(val) / 12.0))
+        try:
+            _add_response(indicators, rt_values, r)
+        except (TypeError, ValueError, OverflowError):
+            # A malformed stored answer is skipped rather than crashing the whole check-in
+            continue
 
     if rt_values:
         indicators["rt_mean"] = float(np.mean(rt_values))
@@ -108,6 +93,36 @@ def extract_indicators(responses: list, journal=None) -> dict:
                 indicators[cluster_key] = float(freq)
 
     return indicators
+
+
+def _add_response(indicators: dict, rt_values: list, r) -> None:
+    key = r.question_key
+    val = r.raw_value
+    rt = r.response_time_ms
+
+    if rt is not None:
+        normalised_rt = normalise_rt(float(rt))
+        rt_values.append(normalised_rt)
+        indicators[f"rt_{key}"] = normalised_rt
+
+    if r.question_type == "text":
+        return  # free-text (encrypted) — screened separately, not scored
+    if isinstance(val, bool):
+        raise TypeError("boolean answer")
+    if r.question_type in ("phq9", "likert"):
+        indicators[key] = normalise_phq(float(val))
+    elif r.question_type == "calendar":
+        days = len(val) if isinstance(val, list) else int(val)
+        indicators[key] = normalise_calendar_inverted(days)
+    elif r.question_type == "numeric" and key == "sleep_hours":
+        hours = float(val)
+        indicators[key] = normalise_sleep_concern(hours)
+        indicators["sleep_hours_raw"] = hours
+    elif r.question_type == "numeric" and key == "meals_per_day":
+        indicators["meals_per_day_raw"] = float(val)
+        indicators[key] = normalise_meals_concern(float(val))
+    elif r.question_type == "numeric":
+        indicators[key] = max(0.0, min(1.0, float(val) / 12.0))
 
 
 def compute_all_domains(indicators: dict, weights: dict) -> dict:
@@ -188,16 +203,50 @@ def run_scoring_pipeline(session_id_str: str) -> None:
             _enrich_journal_with_mh_classifier(db, journal)
 
         indicators = extract_indicators(responses, journal)
+        for k, v in _screen_free_text(responses).items():
+            indicators[k] = max(v, indicators.get(k, 0.0))  # keep the higher of journal / free-text signal
         uncertainty = compute_uncertainty(indicators, EXPECTED_INDICATOR_KEYS)
         session.uncertainty_val = uncertainty
 
-        if should_abstain(uncertainty):
-            session.abstained = True
-            db.commit()
-            return
+        # Flags (including safety flags) are saved even when the check-in can't be scored.
+        # Safety flags kept from before an Edit are not duplicated; if the edited answers
+        # no longer raise one, it is kept and annotated rather than removed.
+        new_flags = detect_dissonance(indicators)
+        # A resubmit (after Edit) replaces the previous result: scores and non-safety flags
+        # are recalculated from scratch; safety flags are kept and handled below.
+        from app.engine.profiles import SAFETY_FLAG_TYPES
+        db.query(DomainScore).filter(DomainScore.session_id == session.id).delete(synchronize_session=False)
+        db.query(DissonanceFlag).filter(
+            DissonanceFlag.session_id == session.id,
+            DissonanceFlag.flag_type.notin_(SAFETY_FLAG_TYPES),
+        ).delete(synchronize_session=False)
+        kept = {
+            f.flag_type: f for f in db.query(DissonanceFlag).filter(DissonanceFlag.session_id == session.id).all()
+        }
+        new_types = {f["flag_type"] for f in new_flags}
+        for flag_type, existing in kept.items():
+            if flag_type not in new_types and EDITED_NOTE not in (existing.self_report_val or ""):
+                existing.self_report_val = f"{existing.self_report_val} {EDITED_NOTE}"
+        for flag in new_flags:
+            if flag["flag_type"] in kept:
+                continue
+            db.add(DissonanceFlag(
+                session_id=session.id,
+                patient_id=session.patient_id,
+                flag_type=flag["flag_type"],
+                self_report_val=flag["self_report_val"],
+                signal_val=flag["signal_val"],
+                severity=flag["severity"],
+            ))
 
         weights = load_weights()
         domain_scores = compute_all_domains(indicators, weights)
+
+        # Too little data, or nothing that maps to a patient type → "not scored" rather than stuck
+        if should_abstain(uncertainty) or not domain_scores:
+            session.abstained = True
+            db.commit()
+            return
 
         from app.config import get_settings
         settings = get_settings()
@@ -215,19 +264,50 @@ def run_scoring_pipeline(session_id_str: str) -> None:
                 confidence=confidence,
             ))
 
-        for flag in detect_dissonance(indicators):
-            db.add(DissonanceFlag(
-                session_id=session.id,
-                patient_id=session.patient_id,
-                flag_type=flag["flag_type"],
-                self_report_val=flag["self_report_val"],
-                signal_val=flag["signal_val"],
-                severity=flag["severity"],
-            ))
-
         db.commit()
     except Exception:
         db.rollback()
+        # Never leave a check-in stuck on "scoring": mark it not scored, then surface the error
+        try:
+            stuck = db.query(Session).filter(Session.id == session_id_str).first()
+            if stuck is not None:
+                stuck.abstained = True
+                db.commit()
+        except Exception:
+            db.rollback()
         raise
     finally:
         db.close()
+
+
+def _screen_free_text(responses: list) -> dict:
+    """
+    Risk-language screen over the free-text answers: an offline keyword check, plus the
+    remote mental-health classifier (same one used on journals) when it is configured.
+    """
+    from app.services.encryption import decrypt
+    from app.services.text_safety import screen_text
+
+    texts = []
+    for r in responses:
+        if r.question_type != "text":
+            continue
+        try:
+            body = decrypt(r.raw_value)
+        except Exception:
+            continue
+        if body.strip():
+            texts.append(body)
+    if not texts:
+        return {}
+
+    combined = "\n".join(texts)
+    hits = screen_text(combined)
+    out = {"text_risk_self": 1.0 if hits["self"] else 0.0, "text_risk_others": 1.0 if hits["others"] else 0.0}
+    try:
+        from app.services.mental_health_classifier import classify_mental_health_risk
+        for label, score in (classify_mental_health_risk(combined) or {}).items():
+            out[f"mh_{label}"] = float(score)
+    except Exception:
+        pass  # classifier unavailable — keyword screen still applies
+    return out
